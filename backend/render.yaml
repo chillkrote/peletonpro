@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: peletonpro-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CORS_ORIGINS
+        value: https://chillkrote.github.io
+      - key: RACE_SEASON_YEAR
+        value: "2025"
+    # Hinweis: Render's kostenloser Plan hat kein persistentes Disk-Volume -
+    # der JSON-Cache unter CACHE_DIR geht bei jedem Deploy/Neustart verloren.
+    # Das ist unkritisch, da der Scheduler beim Start sofort neu scraped.
+    # Für echte Persistenz über Neustarts hinweg: kostenpflichtigen Plan mit
+    # "disk:"-Block verwenden (siehe Render-Docs) oder auf eine externe DB
+    # (z.B. Render Postgres) umstellen.
