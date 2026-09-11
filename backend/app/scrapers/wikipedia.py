@@ -45,3 +45,51 @@ def wiki_title_from_url(url: str) -> str:
     'https://en.wikipedia.org/wiki/2026_Tour_de_France' -> '2026 Tour de France'."""
     tail = url.rsplit("/wiki/", maxsplit=1)[-1]
     return urllib.parse.unquote(tail).replace("_", " ")
+
+
+def fetch_page_images(titles: list[str], thumb_size: int = 200) -> dict[str, str]:
+    """Liefert Thumbnail-Bild-URLs (i.d.R. Infobox-Logo/Trikot) für mehrere
+    Wikipedia-Seiten in einem einzigen Request (`action=query&prop=pageimages`,
+    bis zu 50 Titel pro Aufruf - für unsere ~18 Teams reicht ein Request).
+    Das Ergebnis-Dict ist nach dem JEWEILS ÜBERGEBENEN Titel geschlüsselt
+    (nicht nach dem von MediaWiki normalisierten/aufgelösten Titel), damit
+    der Aufrufer nicht selbst durch `normalized`/`redirects` navigieren muss.
+    Seiten ohne Bild fehlen einfach im Ergebnis-Dict."""
+    if not titles:
+        return {}
+    result: dict[str, str] = {}
+    for i in range(0, len(titles), 50):
+        batch = titles[i:i + 50]
+        data = _api_get(
+            {
+                "action": "query",
+                "titles": "|".join(batch),
+                "prop": "pageimages",
+                "piprop": "thumbnail",
+                "pithumbsize": thumb_size,
+            }
+        )
+        query = data.get("query", {})
+        pages = query.get("pages", {})
+
+        thumb_by_final_title: dict[str, str] = {}
+        for page in pages.values():
+            title = page.get("title")
+            thumb = page.get("thumbnail", {}).get("source")
+            if title and thumb:
+                thumb_by_final_title[title] = thumb
+
+        # normalized/redirects bilden jeweils "from" (unser Input) -> "to"
+        # (aufgelöster Titel) ab - in dieser Reihenfolge verketten, da ein
+        # Titel erst normalisiert und danach ggf. weitergeleitet wird.
+        resolved: dict[str, str] = {t: t for t in batch}
+        for entry in query.get("normalized", []):
+            resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
+        for entry in query.get("redirects", []):
+            resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
+
+        for original_title, final_title in resolved.items():
+            thumb = thumb_by_final_title.get(final_title)
+            if thumb:
+                result[original_title] = thumb
+    return result

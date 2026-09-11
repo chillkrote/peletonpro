@@ -13,6 +13,11 @@ ab - keine ProTeams oder Continental Teams, anders als procyclingstats.com.
 Auf ausdrücklichen Wunsch verwendet, da procyclingstats.com Render's
 Cloud-IPs blockiert (siehe README) und Teams ohnehin nicht häufig
 aktualisiert werden müssen.
+
+Team-Logos werden zusätzlich per `action=query&prop=pageimages` (Infobox-
+Bild der jeweiligen Team-Seite) in einem einzigen Batch-Request für alle
+Teams nachgeladen - best-effort, ein Team ohne Infobox-Bild bleibt einfach
+ohne Logo statt den ganzen Abruf fehlschlagen zu lassen.
 """
 import logging
 import re
@@ -20,7 +25,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import Team
-from .wikipedia import fetch_section
+from .wikipedia import fetch_page_images, fetch_section, wiki_title_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +98,20 @@ def fetch_current_worldteams() -> list[Team]:
             "Keine WorldTeams auf der Wikipedia-Seite gefunden - Struktur hat "
             "sich vermutlich geändert."
         )
+
+    # Team-Logos (Infobox-Bild der jeweiligen Team-Wikipedia-Seite) in einem
+    # einzigen Batch-Request nachladen - best-effort, ein Fehler hier darf
+    # die Teams selbst nicht verwerfen.
+    try:
+        logos = fetch_page_images([wiki_title_from_url(t.source_url) for t in teams if t.source_url])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Team-Logo-Abruf fehlgeschlagen, Teams bleiben ohne Logo: %s", exc)
+        logos = {}
+    for team in teams:
+        if team.source_url:
+            team.logo = logos.get(wiki_title_from_url(team.source_url))
+    logger.info("Team-Logos: %d/%d Teams mit Bild", sum(1 for t in teams if t.logo), len(teams))
+
     return teams
 
 
