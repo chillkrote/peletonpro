@@ -46,8 +46,15 @@ def on_startup() -> None:
                 follow_redirects=True,
             )
             text = resp.text
-            markers = ["UAE Team Emirates", "Visma", "Alpecin", "__NEXT_DATA__", "id=\"root\"", "id=\"__next\""]
-            found = [m for m in markers if m in text]
+            flat = " ".join(text.split())  # Zeilenumbrüche entfernen, damit Render-Logs nicht abschneiden
+            markers = [
+                "UAE Team Emirates", "Visma", "Alpecin", "Ineos", "Lidl-Trek",
+                "__NEXT_DATA__", "__NUXT__", "__INITIAL_STATE__",
+                "id=\"root\"", "id=\"app\"", "ng-version", "data-reactroot",
+                "application/ld+json", "views-view", "field--name", "paragraph--type",
+                "enable javascript", "roster",
+            ]
+            found = [m for m in markers if m.lower() in flat.lower()]
             logger.info(
                 "UCI-Probe: %s -> status=%s final_url=%s len=%d markers=%s",
                 probe_url,
@@ -56,10 +63,13 @@ def on_startup() -> None:
                 len(text),
                 found,
             )
-            # Body-Anfang loggen, um SPA-Shell vs. serverseitig gerendertes HTML zu unterscheiden
-            body_start = text.find("<body")
-            snippet = text[body_start:body_start + 1500] if body_start != -1 else text[:1500]
+            body_start = flat.find("<body")
+            snippet = flat[body_start:body_start + 4000] if body_start != -1 else flat[:4000]
             logger.info("UCI-Probe body snippet: %s", snippet)
+
+            ldjson_pos = flat.lower().find("application/ld+json")
+            if ldjson_pos != -1:
+                logger.info("UCI-Probe ld+json context: %s", flat[max(0, ldjson_pos - 50):ldjson_pos + 2000])
         except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
             logger.warning("UCI-Probe fehlgeschlagen für %s: %s", probe_url, exc)
 
