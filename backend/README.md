@@ -20,13 +20,49 @@ es wird einfach der letzte funktionierende Stand weiter ausgeliefert
 (inkl. `error`-Feld in der API-Antwort, falls der letzte Versuch
 fehlschlug).
 
-## Wichtiger Hinweis: unverifizierte Scraper-Selektoren
+## Status der Scraper-Selektoren
 
-Die CSS-Selektoren in `app/scrapers/pcs_teams.py` und
-`app/scrapers/pcs_races.py` basieren auf der allgemein bekannten,
-tabellenbasierten Struktur von procyclingstats.com, konnten aber **in der
-Entwicklungsumgebung nicht gegen die echte Live-Seite getestet werden**
-(Netzwerkzugriff war dort blockiert). Bitte vor dem produktiven Einsatz:
+Diese Entwicklungsumgebung hat keinen Netzwerkzugriff auf
+procyclingstats.com (vom Sandbox-Proxy blockiert). Beide Scraper sind
+daher gegen von echten Seitenaufrufen kopiertes HTML verifiziert (nicht
+live gegen die Seite selbst) - Stand 2026-09-11:
+
+- **`app/scrapers/pcs_teams.py` - VERIFIZIERT.**
+  - `/teams/worldtour` (WorldTeams + ProTeams zusammen): KEINE Tabelle,
+    sondern `<h4>`-Überschriften ("UCI WorldTeams" / "UCI ProTeams")
+    gefolgt von `<ul class="list">`-Listen.
+  - `/teams/continental`: KOMPLETT ANDERE Struktur - nach Land gruppiert
+    über `<h3>`-Überschriften (Flag-Klasse "flags", nicht "flag") mit
+    reinem Fließtext ("1. `<a>`Name (Fahrerzahl)`</a>`<br/>2. ...") statt
+    einer Liste.
+- **`app/scrapers/pcs_races.py` - VERIFIZIERT.**
+  - Rennkalender (`races.php?year=...&circuit=1&filter=Filter`, canonical
+    `/calendar/uci/year-calendar`): eine echte `<table class="basic">`
+    mit Datum, Renn-Link+Flagge, Sieger und PCS-Klassifizierungscode
+    (z.B. "2.UWT", "1.UWT") - die ursprüngliche Tabellen-Annahme war hier
+    richtig.
+  - Rennergebnisse: genutzt wird die einfache Top-10-Tabelle
+    ("`<h4>`Result {year}`</h4>`" + `<table class="basic">`) auf der
+    Renn-Übersichtsseite (`race/{slug}/{year}`), NICHT die deutlich
+    komplexere, tab-basierte Etappen-Ergebnisseite
+    (`race/{slug}/{year}/stage-{n}/result/result` mit mehreren
+    Klassifikations-Tabs und Team-Zeitfahr-Sonderfall) - bewusste
+    Vereinfachung, siehe Docstring in `pcs_races.py`.
+
+So testet man die Parser ohne Netzwerkzugriff gegen gespeichertes HTML
+(z.B. per Browser-Devtools kopiert):
+
+```python
+from app.scrapers.pcs_teams import parse_teams_page, parse_continental_teams_page
+from app.scrapers.pcs_races import parse_calendar_page, parse_race_result_page
+
+teams = parse_teams_page(open("worldtour.html", encoding="utf-8").read())
+cont_teams = parse_continental_teams_page(open("continental.html", encoding="utf-8").read())
+races = parse_calendar_page(open("calendar.html", encoding="utf-8").read(), 2026)
+result = parse_race_result_page(open("race.html", encoding="utf-8").read(), "tour-de-france", 2026)
+```
+
+Mit echtem Netzwerkzugriff (lokal) direkt gegen die Live-Seite:
 
 ```bash
 cd backend
@@ -34,10 +70,11 @@ python -m app.scrapers.pcs_teams   # sollte Team-Objekte ausgeben
 python -m app.scrapers.pcs_races   # sollte Race-Objekte ausgeben
 ```
 
-Falls keine oder falsche Daten erscheinen: Die Konstanten
-`TEAM_ROW_SELECTOR`, `TEAM_LINK_SELECTOR`, `RACE_ROW_SELECTOR` etc. am
-Anfang der jeweiligen Datei an die tatsächliche Seitenstruktur anpassen
-(Browser-Devtools -> Element inspizieren -> CSS-Selektor ablesen).
+Falls keine oder falsche Daten erscheinen: Die Selektor-Konstanten am
+Anfang der jeweiligen Datei (z.B. `SECTION_HEADING_SELECTOR`,
+`TEAM_LINK_SELECTOR`, `RACE_ROW_SELECTOR`) an die tatsächliche
+Seitenstruktur anpassen (Browser-Devtools -> Element inspizieren -> CSS-
+Selektor ablesen).
 
 ## Scraping-Ethik
 
