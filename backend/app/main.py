@@ -59,27 +59,10 @@ def _log_section(page: str, section_line_substr: str) -> None:
 
 def _wiki_probe() -> None:
     """TEMPORÄR - wird wieder entfernt: prüft per Render-Logs die Struktur der
-    Kalender- und Ergebnis-Tabellen auf Wikipedia."""
-    try:
-        _log_section("2026 UCI World Tour", "Events")
-    except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
-        logger.warning("Wiki-Probe Events-Sektion fehlgeschlagen: %s", exc)
-
-    try:
-        _log_section("2026 Tour de France", "General classification")
-    except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
-        logger.warning("Wiki-Probe Tour-de-France-Ergebnis-Sektion fehlgeschlagen: %s", exc)
-
+    Ein-Tages-Rennen-Ergebnistabelle ('Result') auf Wikipedia."""
     for candidate in ("2026 Milan–San Remo", "2026 Paris–Roubaix", "2026 Strade Bianche"):
         try:
-            result = _wiki_get({"action": "parse", "page": candidate, "prop": "sections"})
-            data = result["json"]
-            if "error" in data:
-                logger.info("Wiki-Probe one-day candidate '%s' -> error: %s", candidate, data["error"])
-                continue
-            lines = [s.get("line") for s in data.get("parse", {}).get("sections", [])]
-            logger.info("Wiki-Probe one-day candidate '%s' exists, sections=%s", candidate, lines)
-            _log_section(candidate, "Results")
+            _log_section(candidate, "Result")
         except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
             logger.warning("Wiki-Probe one-day candidate '%s' fehlgeschlagen: %s", candidate, exc)
 
