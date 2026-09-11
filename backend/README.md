@@ -114,6 +114,37 @@ Optionen für Teams/Rennkalender, falls das Problem bestehen bleibt:
    Server statt Cloud-Hosting) - rechtliche/ethische Bewertung vorher
    selbst vornehmen.
 
+### uci.org als Alternative geprüft (Stand 2026-09-11) - nicht per einfachem HTTP-Scraping nutzbar
+
+Auf expliziten Wunsch wurde geprüft, ob `uci.org` (offizielle UCI-Seite) als
+Datenquelle für Teams taugt. Ergebnis, verifiziert über eine temporäre
+Diagnose-Route im Live-Deployment (per Render-Logs ausgewertet, danach
+wieder entfernt):
+
+- `https://www.uci.org/road/teams` ist von Render aus erreichbar (Status
+  200, kein IP-Block wie bei procyclingstats.com).
+- Die Seite ist aber eine **client-seitig gerenderte Single-Page-App**:
+  Das Server-HTML enthält nur ein Navigations-Grundgerüst, einen
+  Google-Tag-Manager-Block und einen großen `webSettings`-JS-Konfigurationsblock
+  (i18n-Strings für Kalender/Rankings/Team-Details usw.), aber keine
+  einzige echte Team- oder Fahrer-Bezeichnung im HTML.
+- Es gibt genau ein gebündeltes Skript (`/assets/<version>/main.js`), keine
+  im Quelltext sichtbaren `/api/`- oder GraphQL-Endpunkte, und die
+  Navigations-Links nutzen 22-stellige Hash-IDs (z.B.
+  `/for-uci-teams/1XCm9CiRz9q5DHMCXOYCyN`) - typisch für eine Headless-CMS-
+  Anbindung (z.B. Contentful), deren Daten erst nach Ausführung des
+  JavaScript-Bundles im Browser nachgeladen werden.
+- Die Seite läuft zusätzlich hinter Cloudflare (`cdn-cgi/scripts/...`).
+
+Ein einfacher HTTP-Client (wie unser `httpx`-basierter Scraper) bekommt hier
+also grundsätzlich keine Team-Daten zu sehen, unabhängig von Blocking -
+es fehlt schlicht am Rendern. Das würde einen Headless-Browser (z.B.
+Playwright) im Backend erfordern, was auf Renders kostenlosem Plan wegen
+RAM-/Zeitlimits kaum praktikabel ist und zusätzlich an Cloudflares
+Bot-Erkennung scheitern könnte. uci.org wird daher **nicht** als
+Datenquelle verwendet; procyclingstats.com bleibt der einzige (aktuell
+blockierte) Scraping-Kandidat für Teams/Rennkalender, siehe oben.
+
 ## Lokal starten
 
 ```bash
