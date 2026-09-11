@@ -81,8 +81,6 @@ body {
     overflow-x: hidden;
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Roboto+Condensed:wght@400;700&display=swap');
-
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-secondary);
     font-weight: var(--heading-font-weight);
@@ -511,17 +509,6 @@ a:hover {
 }
 
 .news-card {
-    /* ... bestehende Regeln ... */
-    display: flex;          /* NEU */
-    flex-direction: column; /* NEU */
-    height: 100%;          /* NEU: Gleichmäßige Höhe */
-}
-
-.news-card .news-image {
-    flex: 0 0 200px;       /* NEU: Feste Höhe für Bilder */
-}
-
-.news-card {
     background: var(--white);
     border-radius: var(--radius-lg);
     overflow: hidden;
@@ -529,6 +516,13 @@ a:hover {
     transition: var(--transition);
     border: 1px solid var(--gray-200);
     position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.news-card .news-image {
+    flex: 0 0 200px;
 }
 
 .news-card::before {
@@ -624,19 +618,6 @@ a:hover {
     max-width: 1200px;
     margin: 0 auto;
     padding: 0 var(--space-lg);
-}
-
-.section-title {
-    text-align: center;
-    margin-bottom: var(--space-2xl);
-    color: var(--primary);
-    position: relative;
-    display: inline-block;
-}
-
-.section-title i {
-    margin-right: var(--space-sm);
-    color: var(--secondary);
 }
 
 .live-filters, .team-filters, .race-filters {
@@ -1201,7 +1182,7 @@ a:hover {
 
 .calendar-day:hover:not(.empty) {
     transform: translateY(-3px);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
     border-color: var(--secondary);
 }
 

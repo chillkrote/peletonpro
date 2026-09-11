@@ -26,6 +26,7 @@ class LiveResultsManager {
     }
 
     updateLiveBadge() {
+        if (!this.liveBadge) return;
         const liveCount = getLiveResults().length;
         this.liveBadge.textContent = liveCount;
         this.liveBadge.style.display = liveCount > 0 ? 'inline-block' : 'none';
