@@ -37,7 +37,7 @@ def on_startup() -> None:
     # Erreichbarkeits-Probe für uci.org, um per Render-Logs zu prüfen, ob
     # die UCI-Seite Cloud-Hosting-IPs blockiert (wie procyclingstats.com)
     # oder als alternative Datenquelle nutzbar wäre.
-    for probe_url in ("https://www.uci.org", "https://www.uci.org/road/teams"):
+    for probe_url in ("https://www.uci.org/road/teams",):
         try:
             resp = httpx.get(
                 probe_url,
@@ -45,13 +45,21 @@ def on_startup() -> None:
                 timeout=15,
                 follow_redirects=True,
             )
+            text = resp.text
+            markers = ["UAE Team Emirates", "Visma", "Alpecin", "__NEXT_DATA__", "id=\"root\"", "id=\"__next\""]
+            found = [m for m in markers if m in text]
             logger.info(
-                "UCI-Probe: %s -> status=%s final_url=%s len=%d",
+                "UCI-Probe: %s -> status=%s final_url=%s len=%d markers=%s",
                 probe_url,
                 resp.status_code,
                 resp.url,
-                len(resp.text),
+                len(text),
+                found,
             )
+            # Body-Anfang loggen, um SPA-Shell vs. serverseitig gerendertes HTML zu unterscheiden
+            body_start = text.find("<body")
+            snippet = text[body_start:body_start + 1500] if body_start != -1 else text[:1500]
+            logger.info("UCI-Probe body snippet: %s", snippet)
         except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
             logger.warning("UCI-Probe fehlgeschlagen für %s: %s", probe_url, exc)
 
