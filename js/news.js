@@ -1,77 +1,110 @@
-// ===== NEWS MODULE =====
-// Aggregierter Radsport-Newsfeed vom Backend (RSS-Aggregation), pollt
-// periodisch nach neuen Meldungen.
-const NEWS_POLL_INTERVAL_MS = 5 * 60 * 1000;
+// ===== NEWS-SEITE =====
+// Erste Meldung groß als Featured-Card, Rest im Karten-Grid. Filter-Chips
+// nach Quelle werden dynamisch aus den geladenen Daten gebaut.
+let allNews = [];
+let currentSource = 'all';
 
-class NewsManager {
-    constructor() {
-        this.newsGrid = document.getElementById('news-grid');
-        this.init();
-    }
+document.addEventListener('DOMContentLoaded', async () => {
+    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'News' }] });
 
-    async init() {
-        if (!this.newsGrid) return;
-        await this.loadNews();
-        setInterval(() => this.loadNews(), NEWS_POLL_INTERVAL_MS);
-    }
+    const content = document.getElementById('news-content');
+    if (renderComingSoonIfWomen(content)) return;
 
-    async loadNews() {
-        try {
-            const { news } = await Api.getNews(9);
-            this.renderNews(news || []);
-        } catch (err) {
-            console.error('Fehler beim Laden der News:', err);
-            this.renderError();
-        }
+    content.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade News…</h3></div>`;
+    try {
+        const { news } = await Api.getNews(30);
+        allNews = news || [];
+        renderPage(content);
+    } catch (err) {
+        console.error('Fehler beim Laden der News:', err);
+        content.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>News konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
     }
+});
 
-    formatDate(dateStr) {
-        if (!dateStr) return '';
-        return new Date(dateStr).toLocaleDateString('de-DE', {
-            day: '2-digit',
-            month: 'long',
-            year: 'numeric',
-        });
-    }
-
-    renderNews(news) {
-        if (news.length === 0) {
-            this.newsGrid.innerHTML = `
-                <div class="no-results">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <p>Keine News verfügbar</p>
-                </div>
-            `;
-            return;
-        }
-        this.newsGrid.innerHTML = news.map((item, index) => `
-            <article class="news-card ${index === 0 ? 'featured' : ''}">
-                <div class="news-image placeholder">
-                    <i class="fas fa-image"></i>
-                    <span>${escapeHtml(item.source)}</span>
-                </div>
-                <div class="news-content">
-                    <span class="news-category">${escapeHtml(item.source)}</span>
-                    <h3><a href="${safeUrl(item.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a></h3>
-                    ${item.summary ? `<p class="news-excerpt">${escapeHtml(item.summary)}</p>` : ''}
-                    <div class="news-meta">
-                        <span><i class="fas fa-clock"></i> ${escapeHtml(this.formatDate(item.published))}</span>
-                    </div>
-                </div>
-            </article>
-        `).join('');
-    }
-
-    renderError() {
-        this.newsGrid.innerHTML = `
-            <div class="no-results">
-                <i class="fas fa-exclamation-triangle"></i>
-                <p>News konnten nicht geladen werden. Bitte später erneut versuchen.</p>
-            </div>
-        `;
-    }
+function formatRelative(dateStr) {
+    if (!dateStr) return '';
+    const then = new Date(dateStr).getTime();
+    if (Number.isNaN(then)) return '';
+    const diffMs = Date.now() - then;
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (hours < 1) return 'vor wenigen Minuten';
+    if (hours < 24) return `vor ${hours} Stunde${hours === 1 ? '' : 'n'}`;
+    const days = Math.floor(hours / 24);
+    return `vor ${days} Tag${days === 1 ? '' : 'en'}`;
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    new NewsManager();
-});
+function getFiltered() {
+    if (currentSource === 'all') return allNews;
+    return allNews.filter((item) => item.source === currentSource);
+}
+
+function renderPage(container) {
+    if (allNews.length === 0) {
+        container.innerHTML = `<div class="state-panel"><i class="fas fa-newspaper"></i><h3>Keine News verfügbar</h3></div>`;
+        return;
+    }
+
+    const sources = [...new Set(allNews.map((item) => item.source))];
+    const chipsHtml = `
+        <div class="news-filters">
+            <span class="chip ${currentSource === 'all' ? 'active' : ''}" data-source="all">Alle</span>
+            ${sources.map((s) => `<span class="chip ${currentSource === s ? 'active' : ''}" data-source="${escapeHtml(s)}">${escapeHtml(s)}</span>`).join('')}
+        </div>
+    `;
+
+    container.innerHTML = `<div id="news-featured"></div>${chipsHtml}<div id="news-grid-wrap"></div>`;
+    container.querySelectorAll('.chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            currentSource = chip.dataset.source;
+            renderPage(container);
+        });
+    });
+
+    renderList();
+}
+
+function renderList() {
+    const filtered = getFiltered();
+    const featuredWrap = document.getElementById('news-featured');
+    const gridWrap = document.getElementById('news-grid-wrap');
+    if (!featuredWrap || !gridWrap) return;
+
+    if (filtered.length === 0) {
+        featuredWrap.innerHTML = '';
+        gridWrap.innerHTML = `<div class="state-panel"><i class="fas fa-filter"></i><h3>Keine News für diese Auswahl</h3></div>`;
+        return;
+    }
+
+    const [featured, ...rest] = filtered;
+    featuredWrap.innerHTML = `
+        <div class="featured-news">
+            <a class="card" href="${safeUrl(featured.link)}" target="_blank" rel="noopener noreferrer">
+                <div class="img"><span class="tag">Top-Story</span></div>
+                <div class="body">
+                    <div class="source">${escapeHtml(featured.source)}</div>
+                    <h2>${escapeHtml(featured.title)}</h2>
+                    ${featured.summary ? `<p class="excerpt">${escapeHtml(featured.summary)}</p>` : ''}
+                    <div class="time">${escapeHtml(formatRelative(featured.published))}</div>
+                </div>
+            </a>
+        </div>
+    `;
+
+    gridWrap.innerHTML = `
+        <div class="news-grid">
+            ${rest
+                .map(
+                    (item) => `
+                <a class="news-card" href="${safeUrl(item.link)}" target="_blank" rel="noopener noreferrer">
+                    <div class="thumb"><span class="source-pill">${escapeHtml(item.source)}</span></div>
+                    <div class="cbody">
+                        <h3>${escapeHtml(item.title)}</h3>
+                        <div class="time">${escapeHtml(formatRelative(item.published))}</div>
+                    </div>
+                </a>
+            `
+                )
+                .join('')}
+        </div>
+    `;
+}

@@ -3,272 +3,54 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PelotonPro – Dein Radsport-Portal | Live Ergebnisse, Teams & Rennen</title>
-    <meta name="description" content="Alle World Tour Teams, Continental Teams, Rennen und Live-Ergebnisse auf einen Blick – ohne Bilder, nur mit modernem Design.">
+    <title>PelotonPro – Dein Radsport-Portal</title>
+    <meta name="description" content="Races, Teams und News der UCI World Tour auf einen Blick.">
 
-    <!-- Google Fonts (Open Sans + Roboto Condensed) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Roboto+Condensed:wght@400;700&display=swap" rel="stylesheet">
-
-    <!-- Font Awesome für Icons -->
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Roboto+Condensed:wght@400;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
-    <!-- Eigenes Stylesheet -->
     <link rel="stylesheet" href="style/style.css">
 </head>
 <body>
-    <!-- ===== HEADER (ähnlich CyclingMagazine) ===== -->
-    <header class="site-header">
-        <div class="header-top">
-            <div class="container">
-                <div class="header-left">
-                    <a href="#" class="social-link"><i class="fab fa-facebook-f"></i></a>
-                    <a href="#" class="social-link"><i class="fab fa-twitter"></i></a>
-                    <a href="#" class="social-link"><i class="fab fa-instagram"></i></a>
-                </div>
-                <div class="header-right">
-                    <a href="#" class="user-link"><i class="fas fa-user"></i> Login</a>
-                </div>
-            </div>
-        </div>
-        
-        <div class="header-main">
-            <div class="container">
-                <!-- Logo -->
-                <a href="#home" class="site-logo">
-                    <div class="logo-placeholder">
-                        <i class="fas fa-bicycle"></i>
-                        <span>PelotonPro</span>
-                    </div>
-                </a>
-                
-                <!-- Navigation -->
-                <nav class="main-nav">
-                    <ul>
-                        <li><a href="#home" class="active">Startseite</a></li>
-                        <li><a href="#live">Live <span class="badge" id="live-badge">0</span></a></li>
-                        <li><a href="#teams">Teams</a></li>
-                        <li><a href="#races">Rennen</a></li>
-                        <li><a href="#calendar">Kalender</a></li>
-                        <li><a href="#">Magazin</a></li>
-                        <li><a href="#">Shop</a></li>
-                    </ul>
-                </nav>
-                
-                <!-- Suchleiste -->
-                <div class="header-search">
-                    <form>
-                        <input type="text" id="search-input" placeholder="Suche Teams, Rennen...">
-                        <button type="submit"><i class="fas fa-search"></i></button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </header>
+    <div id="site-nav" class="topnav"></div>
 
-    <!-- ===== HERO SECTION (großes Bild mit Overlay) ===== -->
-    <section id="home" class="hero-section">
-        <div class="hero-background">
-            <div class="placeholder hero-placeholder">
-                <i class="fas fa-image"></i>
-                <span>Hero-Bild Platzhalter (1920x600)</span>
-            </div>
-        </div>
-        <div class="hero-content">
-            <div class="container">
-                <div class="hero-text">
-                    <h1>Dein Radsport-Portal</h1>
-                    <p class="hero-subtitle">Live Ergebnisse, Teams, Rennen & mehr – immer auf dem Laufenden</p>
-                    <div class="hero-stats">
-                        <div class="hero-stat">
-                            <span id="total-teams">-</span>
-                            <label>Teams</label>
-                        </div>
-                        <div class="hero-stat">
-                            <span id="total-races">-</span>
-                            <label>Rennen</label>
-                        </div>
-                        <div class="hero-stat">
-                            <span id="next-race-date">-</span>
-                            <label>Nächstes Rennen</label>
-                        </div>
-                    </div>
-                </div>
-                <div class="hero-features">
-                    <div class="feature-card">
-                        <i class="fas fa-satellite-dish"></i>
-                        <h3>Live Ergebnisse</h3>
-                        <p>Echtzeit-Updates zu allen Rennen</p>
-                    </div>
-                    <div class="feature-card">
-                        <i class="fas fa-users"></i>
-                        <h3>Alle Teams</h3>
-                        <p>World Tour, ProTeams & Continental</p>
-                    </div>
-                    <div class="feature-card">
-                        <i class="fas fa-flag-checkered"></i>
-                        <h3>Rennkalender</h3>
-                        <p>Alle Termine 2024 im Überblick</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
+    <main>
+        <section class="hero">
+            <h1>Dein Radsport-Portal</h1>
+        </section>
 
-    <!-- ===== NEWS SECTION (ähnlich CyclingMagazine) ===== -->
-    <section class="news-section">
-        <div class="container">
-            <h2 class="section-title"><i class="fas fa-newspaper"></i> Radsport News</h2>
-            <div id="news-grid" class="news-grid">
-                <div class="no-results">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <p>Lade aktuelle News…</p>
-                </div>
-            </div>
+        <div class="tiles">
+            <a href="races.html" class="tile tile-races">
+                <div class="icon-wrap"><i class="fas fa-flag-checkered"></i></div>
+                <div class="bignum" id="tile-races-count">–</div>
+                <h2>Races</h2>
+                <p>Kalender, laufende Rennen &amp; Ergebnisse</p>
+                <span class="go">Ansehen <i class="fas fa-chevron-right"></i></span>
+            </a>
+            <a href="teams.html" class="tile tile-teams">
+                <div class="icon-wrap"><i class="fas fa-users"></i></div>
+                <div class="bignum" id="tile-teams-count">–</div>
+                <h2>Teams</h2>
+                <p>Alle WorldTeams im Überblick</p>
+                <span class="go">Ansehen <i class="fas fa-chevron-right"></i></span>
+            </a>
+            <a href="news.html" class="tile tile-news">
+                <div class="icon-wrap"><i class="fas fa-newspaper"></i></div>
+                <div class="bignum" id="tile-news-count">–</div>
+                <h2>News</h2>
+                <p>Die neuesten Radsport-Schlagzeilen</p>
+                <span class="go">Ansehen <i class="fas fa-chevron-right"></i></span>
+            </a>
         </div>
-    </section>
+    </main>
 
-    <!-- ===== LIVE ERGEBNISSE ===== -->
-    <section id="live" class="section">
-        <div class="container">
-            <h2 class="section-title"><i class="fas fa-satellite-dish"></i> Live Ergebnisse</h2>
-            <div class="live-filters">
-                <button class="filter-btn active" data-filter="all">Alle</button>
-                <button class="filter-btn" data-filter="wt">World Tour</button>
-                <button class="filter-btn" data-filter="pro">ProSeries</button>
-                <button class="filter-btn" data-filter="1">1.X</button>
-            </div>
-            <div id="live-results" class="results-grid"></div>
-        </div>
-    </section>
-
-    <!-- ===== TEAMS SECTION ===== -->
-    <section id="teams" class="section">
-        <div class="container">
-            <h2 class="section-title"><i class="fas fa-users"></i> Teams</h2>
-            <div class="team-filters">
-                <button class="filter-btn active" data-filter="all">Alle</button>
-                <button class="filter-btn" data-filter="wt">World Tour</button>
-                <button class="filter-btn" data-filter="pro">ProTeams</button>
-                <button class="filter-btn" data-filter="cont">Continental</button>
-            </div>
-            <div id="teams-grid" class="teams-grid"></div>
-        </div>
-    </section>
-
-    <!-- ===== RENNEN SECTION ===== -->
-    <section id="races" class="section">
-        <div class="container">
-            <h2 class="section-title"><i class="fas fa-flag-checkered"></i> Rennen 2024</h2>
-            <div class="race-filters">
-                <button class="filter-btn active" data-filter="all">Alle</button>
-                <button class="filter-btn" data-filter="wt">World Tour</button>
-                <button class="filter-btn" data-filter="monument">Monumente</button>
-                <button class="filter-btn" data-filter="gt">Grand Tours</button>
-            </div>
-            <div id="races-list" class="races-list"></div>
-        </div>
-    </section>
-
-    <!-- ===== KALENDER SECTION ===== -->
-    <section id="calendar" class="section">
-        <div class="container">
-            <h2 class="section-title"><i class="fas fa-calendar-alt"></i> Rennkalender</h2>
-            <div class="calendar-controls">
-                <button id="prev-month"><i class="fas fa-chevron-left"></i></button>
-                <h3 id="current-month">-</h3>
-                <button id="next-month"><i class="fas fa-chevron-right"></i></button>
-            </div>
-            <div id="calendar-grid" class="calendar-grid"></div>
-        </div>
-    </section>
-
-    <!-- ===== FOOTER (mehrspaltig wie CyclingMagazine) ===== -->
     <footer class="site-footer">
-        <div class="footer-widgets">
-            <div class="container">
-                <div class="footer-grid">
-                    <div class="footer-column">
-                        <h4>Über PelotonPro</h4>
-                        <p>Dein Portal für Radsport-Nachrichten, Live-Ergebnisse und Team-Infos. Immer auf dem Laufenden mit den neuesten Entwicklungen aus der Welt des Radsports.</p>
-                        <div class="social-links">
-                            <a href="#"><i class="fab fa-facebook-f"></i></a>
-                            <a href="#"><i class="fab fa-twitter"></i></a>
-                            <a href="#"><i class="fab fa-instagram"></i></a>
-                            <a href="#"><i class="fab fa-youtube"></i></a>
-                        </div>
-                    </div>
-                    
-                    <div class="footer-column">
-                        <h4>Schnellzugriff</h4>
-                        <ul>
-                            <li><a href="#home">Startseite</a></li>
-                            <li><a href="#live">Live Ergebnisse</a></li>
-                            <li><a href="#teams">Teams</a></li>
-                            <li><a href="#races">Rennen</a></li>
-                            <li><a href="#calendar">Kalender</a></li>
-                        </ul>
-                    </div>
-                    
-                    <div class="footer-column">
-                        <h4>Kategorien</h4>
-                        <ul>
-                            <li><a href="#">World Tour</a></li>
-                            <li><a href="#">ProTeams</a></li>
-                            <li><a href="#">Continental</a></li>
-                            <li><a href="#">Grand Tours</a></li>
-                            <li><a href="#">Klassiker</a></li>
-                        </ul>
-                    </div>
-                    
-                    <div class="footer-column">
-                        <h4>Newsletter</h4>
-                        <p>Bleibe auf dem Laufenden mit unserem Newsletter.</p>
-                        <form class="newsletter-form">
-                            <input type="email" placeholder="Deine E-Mail-Adresse">
-                            <button type="submit"><i class="fas fa-paper-plane"></i></button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="footer-bottom">
-            <div class="container">
-                <p>&copy; 2024 PelotonPro. Alle Rechte vorbehalten.</p>
-                <div class="footer-links">
-                    <a href="#">Impressum</a>
-                    <a href="#">Datenschutz</a>
-                    <a href="#">Kontakt</a>
-                </div>
-            </div>
-        </div>
+        <p>&copy; 2026 PelotonPro · <a href="#">Impressum</a> · <a href="#">Datenschutz</a></p>
     </footer>
 
-    <!-- Back to Top Button -->
-    <button class="back-to-top" aria-label="Nach oben">
-        <i class="fas fa-chevron-up"></i>
-    </button>
-
-    <!-- Scripts -->
     <script src="js/api.js"></script>
-    <script src="js/news.js"></script>
-    <script src="js/live.js"></script>
-    <script src="js/app.js"></script>
-    <script>
-        // Back to Top Button
-        const backToTopButton = document.querySelector('.back-to-top');
-        window.addEventListener('scroll', () => {
-            if (window.pageYOffset > 300) {
-                backToTopButton.classList.add('visible');
-            } else {
-                backToTopButton.classList.remove('visible');
-            }
-        });
-        backToTopButton.addEventListener('click', () => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        });
-    </script>
+    <script src="js/nav.js"></script>
+    <script src="js/home.js"></script>
 </body>
 </html>
