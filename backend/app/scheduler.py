@@ -17,16 +17,17 @@ from .config import (
     REFRESH_INTERVAL_RESULTS,
     REFRESH_INTERVAL_TEAMS,
 )
+from .models import Race
 from .news.rss import fetch_all_news
-from .scrapers.pcs_races import fetch_race_calendar, fetch_race_result
-from .scrapers.pcs_teams import fetch_all_teams
+from .scrapers.wikipedia_races import fetch_race_calendar, fetch_race_result
+from .scrapers.wikipedia_teams import fetch_current_worldteams
 
 logger = logging.getLogger(__name__)
 
 
 def refresh_teams() -> None:
     try:
-        teams = fetch_all_teams()
+        teams = fetch_current_worldteams()
         cache.set("teams", [t.model_dump() for t in teams])
         logger.info("Teams aktualisiert: %d Einträge", len(teams))
     except Exception as exc:  # noqa: BLE001 - Job darf niemals crashen
@@ -45,7 +46,16 @@ def refresh_calendar() -> None:
 
 
 def refresh_results() -> None:
-    """Holt Ergebnisse für Rennen, deren Zeitraum die aktuelle Kalenderwoche berührt.
+    """Holt Ergebnisse für alle bereits gestarteten Rennen der Saison.
+
+    Anders als bei Live-Scraping (procyclingstats.com) gibt es hier keinen
+    Sinn in einem engen "aktuell laufend"-Fenster: Wikipedia-Artikel werden
+    von Freiwilligen bearbeitet, nicht in Echtzeit, und das Endergebnis
+    bleibt nach Rennende dauerhaft im Artikel stehen. Daher werden alle
+    Rennen berücksichtigt, deren Startdatum in der Vergangenheit liegt -
+    Rennen, für die noch kein Ergebnis-Abschnitt existiert (laufend oder
+    Artikel noch nicht aktualisiert), liefern einfach kein Ergebnis (siehe
+    fetch_race_result) und werden übersprungen.
 
     Best-effort: basiert auf dem zuletzt gecachten Kalender. Ohne Kalender-
     Daten (z.B. beim allerersten Start) wird der Lauf übersprungen.
@@ -56,23 +66,23 @@ def refresh_results() -> None:
         return
 
     today = date.today().isoformat()
-    active_races = [
-        r for r in calendar_entry["data"] if r["start_date"] <= today <= r["end_date"]
-    ]
+    started_races = [r for r in calendar_entry["data"] if r["start_date"] <= today]
 
     results = []
     errors = []
-    for race in active_races:
+    for race_dict in started_races:
         try:
-            result = fetch_race_result(race["id"])
-            results.append(result.model_dump())
+            race = Race(**race_dict)
+            result = fetch_race_result(race)
+            if result is not None:
+                results.append(result.model_dump())
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Ergebnis-Scraping für '%s' fehlgeschlagen: %s", race["id"], exc)
-            errors.append(f"{race['id']}: {exc}")
+            logger.warning("Ergebnis-Scraping für '%s' fehlgeschlagen: %s", race_dict["id"], exc)
+            errors.append(f"{race_dict['id']}: {exc}")
 
     if results:
         cache.set("results", results)
-        logger.info("Ergebnisse aktualisiert: %d aktive Rennen", len(results))
+        logger.info("Ergebnisse aktualisiert: %d Rennen mit Ergebnis", len(results))
     elif errors:
         cache.mark_error("results", "; ".join(errors))
 

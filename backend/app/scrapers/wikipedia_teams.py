@@ -1,0 +1,102 @@
+"""Scraper für die UCI-WorldTeams-Übersicht von Wikipedia.
+
+VERIFIZIERT am 2026-09-11 gegen echte Wikipedia-API-Antworten (per
+temporärer Render-Diagnose-Route geprüft, siehe backend/README.md):
+
+Artikel "UCI World Tour", Abschnitt "Current UCI WorldTeams (2026 season)":
+eine `<table class="wikitable sortable">` mit den Spalten Team (Link auf die
+eigene Wikipedia-Seite des Teams), Country (Flagge + Ländername als Text),
+Seasons in World Tour, No. of seasons, Previous team names.
+
+Wikipedia deckt hier nur die WorldTeams (oberste Stufe, aktuell 18 Teams)
+ab - keine ProTeams oder Continental Teams, anders als procyclingstats.com.
+Auf ausdrücklichen Wunsch verwendet, da procyclingstats.com Render's
+Cloud-IPs blockiert (siehe README) und Teams ohnehin nicht häufig
+aktualisiert werden müssen.
+"""
+import logging
+import re
+
+from bs4 import BeautifulSoup
+
+from ..models import Team
+from .wikipedia import fetch_section
+
+logger = logging.getLogger(__name__)
+
+WORLDTEAMS_PAGE = "UCI World Tour"
+WORLDTEAMS_SECTION = "current uci worldteams"
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "unknown"
+
+
+def _country_from_cell(cell) -> str:
+    """Bei Länderwechsel stehen mehrere Flagge+Land-Zeilen per <br/> getrennt
+    im selben Feld - wir nehmen die letzte (aktuellste) Zeile."""
+    lines = [line.strip() for line in cell.get_text(separator="\n").split("\n") if line.strip()]
+    if not lines:
+        return ""
+    text = lines[-1]
+    return re.sub(r"\s*\(\d{4}.*?\)\s*$", "", text).strip()
+
+
+def _parse_team_row(row) -> Team | None:
+    cells = row.find_all("td")
+    if len(cells) < 2:
+        return None  # Header-Zeile (nur <th>) oder unerwartete Struktur
+
+    link = cells[0].select_one('a[href^="/wiki/"]')
+    if link is None:
+        return None
+    name = link.get_text(strip=True)
+    if not name:
+        return None
+    wiki_title = link["href"][len("/wiki/"):]
+
+    country = _country_from_cell(cells[1])
+
+    return Team(
+        id=_slugify(name),
+        name=name,
+        category="wt",
+        country=country or "?",
+        code=_slugify(name)[:3].upper(),
+        riders=None,
+        website=None,
+        source_url=f"https://en.wikipedia.org/wiki/{wiki_title}",
+    )
+
+
+def parse_worldteams_section(html: str) -> list[Team]:
+    """Eigenständige Parse-Funktion, testbar ohne Netzwerkzugriff gegen
+    gespeichertes HTML (siehe backend/README.md)."""
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.wikitable")
+    if table is None:
+        return []
+    teams: list[Team] = []
+    for row in table.select("tbody tr"):
+        team = _parse_team_row(row)
+        if team is not None:
+            teams.append(team)
+    return teams
+
+
+def fetch_current_worldteams() -> list[Team]:
+    html = fetch_section(WORLDTEAMS_PAGE, WORLDTEAMS_SECTION)
+    teams = parse_worldteams_section(html)
+    if not teams:
+        raise ValueError(
+            "Keine WorldTeams auf der Wikipedia-Seite gefunden - Struktur hat "
+            "sich vermutlich geändert."
+        )
+    return teams
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    for t in fetch_current_worldteams():
+        print(t.model_dump())
