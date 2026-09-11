@@ -118,6 +118,14 @@ API läuft dann unter `http://localhost:8001`, z.B.
    jedem Neustart/Deploy verloren. Unkritisch, da der Scheduler beim Start
    sofort neu scraped (dauert wenige Sekunden bis Minuten, je nach Anzahl
    Requests).
+5. **Python-Version ist auf 3.11 gepinnt** (`backend/.python-version`).
+   Ohne diese Datei wählt Render standardmäßig die neueste Python-Version
+   (aktuell 3.14), für die es noch kein vorgebautes Wheel für
+   `pydantic-core==2.23.4` gibt - pip versucht dann, es aus Rust-Quellcode
+   zu bauen, was in Renders Build-Sandbox an einem read-only
+   Cargo-Cache-Verzeichnis scheitert (`Build failed`). Bei einem Upgrade
+   von FastAPI/Pydantic kann die gepinnte Version ggf. wieder angehoben
+   werden, sobald aktuelle Wheels verfügbar sind.
 
 ## API-Endpunkte
 
