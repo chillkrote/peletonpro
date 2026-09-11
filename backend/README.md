@@ -90,6 +90,30 @@ Selektor ablesen).
   Verantwortung dafür liegt beim Betreiber dieser Seite, nicht bei diesem
   Code.
 
+### Bekanntes Problem: procyclingstats.com blockiert Cloud-Hosting (Stand 2026-09-11)
+
+Im echten Deployment auf Render.com liefert procyclingstats.com auf **jeden**
+Request (`/teams/worldtour`, `/teams/continental`, `/races.php`) durchgehend
+`403 Forbidden` - unabhängig vom `User-Agent` (getestet mit dem
+transparenten Bot-UA und mit einem vollständigen Chrome-UA, beides ohne
+Erfolg). Das deutet auf eine IP-basierte Blockierung von
+Cloud-/Hosting-Adressbereichen oder eine TLS-/JS-basierte Bot-Erkennung
+hin, die ein einfacher HTTP-Client grundsätzlich nicht umgehen kann.
+
+Es wurde bewusst **keine weitere Umgehung versucht** (kein Proxy-Rotieren,
+kein Headless-Browser-Stealth, kein TLS-Fingerprint-Spoofing) - das wäre
+ein Versuch, den Bot-Schutz der Seite gegen ihren erklärten Willen zu
+umgehen, nicht nur ein Konfigurationsproblem zu beheben. Der Newsfeed
+(Cyclingnews + Google News RSS) ist davon nicht betroffen und funktioniert
+im Live-Deployment fehlerfrei (150 Einträge beim ersten Test).
+
+Optionen für Teams/Rennkalender, falls das Problem bestehen bleibt:
+1. Alternative Datenquelle suchen, die Cloud-Hosting nicht blockiert.
+2. Auf manuell/periodisch gepflegte Daten umstellen (kein Live-Scraping).
+3. Scraper von einer nicht-blockierten IP aus laufen lassen (z.B. eigener
+   Server statt Cloud-Hosting) - rechtliche/ethische Bewertung vorher
+   selbst vornehmen.
+
 ## Lokal starten
 
 ```bash
