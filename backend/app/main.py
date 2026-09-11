@@ -1,4 +1,5 @@
 import logging
+import re
 
 import httpx
 from fastapi import FastAPI
@@ -66,10 +67,21 @@ def on_startup() -> None:
             body_start = flat.find("<body")
             snippet = flat[body_start:body_start + 4000] if body_start != -1 else flat[:4000]
             logger.info("UCI-Probe body snippet: %s", snippet)
+            logger.info("UCI-Probe body snippet (4000-9000): %s", flat[body_start + 4000:body_start + 9000])
 
             ldjson_pos = flat.lower().find("application/ld+json")
             if ldjson_pos != -1:
                 logger.info("UCI-Probe ld+json context: %s", flat[max(0, ldjson_pos - 50):ldjson_pos + 2000])
+
+            # API-Endpunkte suchen, die der Frontend-JS-Code fürs Nachladen der
+            # Team-Daten aufrufen könnte (Hinweis auf REST/GraphQL statt HTML).
+            api_hints = set(re.findall(r'"(/api/[a-zA-Z0-9/_\-{}]*)"', flat))
+            api_hints |= set(re.findall(r'"(https?://[a-zA-Z0-9.\-]*uci[a-zA-Z0-9.\-]*/(?:api|graphql)[a-zA-Z0-9/_\-{}]*)"', flat, re.IGNORECASE))
+            logger.info("UCI-Probe api hints: %s", sorted(api_hints)[:30])
+
+            # Alle <script src="..."> URLs, um das JS-Framework/Bundle zu identifizieren
+            script_srcs = re.findall(r'<script[^>]*\bsrc="([^"]+)"', flat)
+            logger.info("UCI-Probe script srcs: %s", script_srcs[:20])
         except Exception as exc:  # noqa: BLE001 - nur Diagnose, darf App nicht crashen
             logger.warning("UCI-Probe fehlgeschlagen für %s: %s", probe_url, exc)
 
