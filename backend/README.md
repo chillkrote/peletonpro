@@ -20,13 +20,33 @@ es wird einfach der letzte funktionierende Stand weiter ausgeliefert
 (inkl. `error`-Feld in der API-Antwort, falls der letzte Versuch
 fehlschlug).
 
-## Wichtiger Hinweis: unverifizierte Scraper-Selektoren
+## Status der Scraper-Selektoren
 
-Die CSS-Selektoren in `app/scrapers/pcs_teams.py` und
-`app/scrapers/pcs_races.py` basieren auf der allgemein bekannten,
-tabellenbasierten Struktur von procyclingstats.com, konnten aber **in der
-Entwicklungsumgebung nicht gegen die echte Live-Seite getestet werden**
-(Netzwerkzugriff war dort blockiert). Bitte vor dem produktiven Einsatz:
+Diese Entwicklungsumgebung hat keinen Netzwerkzugriff auf
+procyclingstats.com (vom Sandbox-Proxy blockiert). Verifizierung erfolgte
+daher, wo möglich, gegen von echten Seitenaufrufen kopiertes HTML:
+
+- **`app/scrapers/pcs_teams.py` - VERIFIZIERT** (2026-09-11) gegen echtes
+  HTML von `/teams/worldtour` (WorldTeams + ProTeams). Die Struktur ist
+  KEINE Tabelle, sondern `<h4>`-Überschriften gefolgt von
+  `<ul class="list">`-Listen; die Kategorie ergibt sich aus dem
+  Überschriften-Text ("UCI WorldTeams" / "UCI ProTeams"). Die
+  Continental-Teams-Seite (`/teams/continental`) wird mit der gleichen
+  Logik geparst, ist aber selbst NICHT gegen echtes HTML verifiziert -
+  falls dort keine Teams ankommen, prüfen, ob die Seite eine abweichende
+  Struktur hat.
+- **`app/scrapers/pcs_races.py` - UNVERIFIZIERT.** Selektoren basieren
+  weiterhin auf einer (unbestätigten) tabellenbasierten Annahme.
+
+So testet man die Parser ohne Netzwerkzugriff gegen gespeichertes HTML
+(z.B. per Browser-Devtools kopiert):
+
+```python
+from app.scrapers.pcs_teams import parse_teams_page
+teams = parse_teams_page(open("sample.html", encoding="utf-8").read())
+```
+
+Mit echtem Netzwerkzugriff (lokal) direkt gegen die Live-Seite:
 
 ```bash
 cd backend
@@ -34,10 +54,11 @@ python -m app.scrapers.pcs_teams   # sollte Team-Objekte ausgeben
 python -m app.scrapers.pcs_races   # sollte Race-Objekte ausgeben
 ```
 
-Falls keine oder falsche Daten erscheinen: Die Konstanten
-`TEAM_ROW_SELECTOR`, `TEAM_LINK_SELECTOR`, `RACE_ROW_SELECTOR` etc. am
-Anfang der jeweiligen Datei an die tatsächliche Seitenstruktur anpassen
-(Browser-Devtools -> Element inspizieren -> CSS-Selektor ablesen).
+Falls keine oder falsche Daten erscheinen: Die Selektor-Konstanten am
+Anfang der jeweiligen Datei (z.B. `SECTION_HEADING_SELECTOR`,
+`TEAM_LINK_SELECTOR`, `RACE_ROW_SELECTOR`) an die tatsächliche
+Seitenstruktur anpassen (Browser-Devtools -> Element inspizieren -> CSS-
+Selektor ablesen).
 
 ## Scraping-Ethik
 

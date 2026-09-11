@@ -1,39 +1,62 @@
 """Scraper für UCI World Tour / ProTeam / Continental Teams von ProCyclingStats.
 
-ACHTUNG - UNVERIFIZIERT: Diese Session hatte keinen Netzwerkzugriff auf
-procyclingstats.com (vom Sandbox-Proxy blockiert). Die folgenden CSS-
-Selektoren basieren auf der seit Jahren bekannten, tabellenbasierten
-PCS-Struktur, sind aber NICHT gegen die aktuell live Seite getestet.
+VERIFIZIERT am 2026-09-11 gegen echtes HTML der Seite `teams/worldtour`
+(vom Nutzer per Browser-Devtools bereitgestellt, da diese Umgebung keinen
+Netzwerkzugriff auf procyclingstats.com hat). Struktur zum Zeitpunkt der
+Verifizierung:
 
-Vor dem produktiven Einsatz bitte einmal mit echtem Netzwerkzugriff
-gegenprüfen (z.B. lokal: `python -m backend.app.scrapers.pcs_teams`) und
-die Selektoren unten (TEAM_ROW_SELECTOR, TEAM_LINK_SELECTOR, ...) bei
-Bedarf anpassen. Ein Fehlschlag hier crasht die App NICHT - der
-Aufrufer (Scheduler) fängt Exceptions ab und behält die letzten
-funktionierenden Daten im Cache (siehe app/cache.py).
+    <h4>UCI WorldTeams</h4>
+    <ul class="list lh18 fs14 columns2 mob_columns1">
+        <li><div><span class="flag be"></span> <a href="team/SLUG">Name</a></div>
+            <div> (30)</div>              <!-- Fahrer-Anzahl in Klammern -->
+            <div class="fs10"></div></li>
+        ...
+    </ul>
+    <h4>UCI ProTeams</h4>
+    <ul class="list ...">...</ul>
+
+Beide Kategorien (WorldTeams + ProTeams) liegen auf DERSELBEN Seite
+`/teams/worldtour`. Continental Teams liegen unter `/teams/continental`
+(analoge Struktur angenommen, aber NICHT gegen echtes HTML verifiziert -
+siehe backend/README.md, Abschnitt "Scraping-Ethik/Verifizierung").
+
+Die Kategorie wird über den Text der jeweils vorausgehenden <h4>
+bestimmt, nicht über einen Query-Parameter - das war in der ersten
+(unverifizierten) Fassung dieses Moduls falsch angenommen.
 """
 import logging
 import re
 
 from bs4 import BeautifulSoup
 
-from ..config import PCS_BASE_URL, RACE_SEASON_YEAR
+from ..config import PCS_BASE_URL
 from ..models import Team
 from .http import get
 
 logger = logging.getLogger(__name__)
 
-# PCS-Kategorie-Filter -> unser internes category-Kürzel
-CATEGORY_FILTERS = {
-    "wt": "worldteams",
-    "pro": "proteams",
-    "cont": "continental",
+# Eine Seite pro Eintrag; "worldtour" liefert sowohl wt- als auch
+# pro-Teams, die per Überschrift auseinandergehalten werden.
+TEAM_PAGES = {
+    "worldtour": f"{PCS_BASE_URL}/teams/worldtour",
+    "continental": f"{PCS_BASE_URL}/teams/continental",  # Struktur unverifiziert, siehe Docstring
 }
 
-# --- Unverifizierte Selektoren (siehe Modul-Docstring) ---
-TEAM_ROW_SELECTOR = "table.basic tbody tr"
+SECTION_HEADING_SELECTOR = "h4"
 TEAM_LINK_SELECTOR = 'a[href^="team/"]'
 FLAG_SELECTOR = "span.flag"
+RIDER_COUNT_RE = re.compile(r"\((\d+)\)")
+
+
+def _category_from_heading(text: str) -> str | None:
+    text_lower = text.lower()
+    if "worldteam" in text_lower:
+        return "wt"
+    if "proteam" in text_lower:
+        return "pro"
+    if "continental" in text_lower:
+        return "cont"
+    return None
 
 
 def _slugify(text: str) -> str:
@@ -45,24 +68,29 @@ def _country_from_flag_class(flag_el) -> str:
     if flag_el is None:
         return ""
     classes = flag_el.get("class", [])
-    # z.B. class="flag ge" -> "ge" ist der Ländercode; wir geben den
-    # Rohcode zurück, das Frontend kann ihn ggf. später in Klartext mappen.
     codes = [c for c in classes if c != "flag"]
     return codes[0] if codes else ""
 
 
-def _parse_team_row(row, category: str, year: int) -> Team | None:
-    link = row.select_one(TEAM_LINK_SELECTOR)
+def _parse_team_item(li, category: str) -> Team | None:
+    link = li.select_one(TEAM_LINK_SELECTOR)
     if link is None:
         return None
     name = link.get_text(strip=True)
     if not name:
         return None
-    href = link.get("href", "")
-    slug = href.split("/")[-1] if href else _slugify(f"{name}-{year}")
+    href = link.get("href", "").strip("/")
+    if not href:
+        return None
+    slug = href.rsplit("/", maxsplit=1)[-1]
 
-    flag_el = row.select_one(FLAG_SELECTOR)
+    flag_el = li.select_one(FLAG_SELECTOR)
     country_code = _country_from_flag_class(flag_el)
+
+    riders = None
+    match = RIDER_COUNT_RE.search(li.get_text())
+    if match:
+        riders = int(match.group(1))
 
     return Team(
         id=slug,
@@ -70,40 +98,55 @@ def _parse_team_row(row, category: str, year: int) -> Team | None:
         category=category,
         country=country_code.upper() or "?",
         code=_slugify(name)[:3].upper(),
+        riders=riders,
         website=None,
-        source_url=f"{PCS_BASE_URL}/{href}" if href else None,
+        source_url=f"{PCS_BASE_URL}/{href}",
     )
 
 
-def fetch_teams_for_category(category: str, year: int = RACE_SEASON_YEAR) -> list[Team]:
-    pcs_filter = CATEGORY_FILTERS[category]
-    url = f"{PCS_BASE_URL}/teams.php?year={year}&filter=Filter&s={pcs_filter}"
-    response = get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
+def parse_teams_page(html: str) -> list[Team]:
+    """Extrahiert alle Team-Einträge aus einer teams/*-Seite.
 
+    Eigenständige Funktion (statt in fetch_teams_from_page verschachtelt),
+    damit sie sich ohne Netzwerkzugriff gegen gespeichertes HTML testen
+    lässt (siehe backend/README.md).
+    """
+    soup = BeautifulSoup(html, "html.parser")
     teams: list[Team] = []
-    for row in soup.select(TEAM_ROW_SELECTOR):
-        team = _parse_team_row(row, category, year)
-        if team is not None:
-            teams.append(team)
-
-    if not teams:
-        raise ValueError(
-            f"Keine Teams für Kategorie '{category}' gefunden - "
-            "Selektoren stimmen vermutlich nicht mehr mit der PCS-Seite überein."
-        )
+    for heading in soup.select(SECTION_HEADING_SELECTOR):
+        category = _category_from_heading(heading.get_text())
+        if category is None:
+            continue
+        list_el = heading.find_next_sibling("ul")
+        if list_el is None:
+            continue
+        for li in list_el.select("li"):
+            team = _parse_team_item(li, category)
+            if team is not None:
+                teams.append(team)
     return teams
 
 
-def fetch_all_teams(year: int = RACE_SEASON_YEAR) -> list[Team]:
+def fetch_teams_from_page(url: str) -> list[Team]:
+    response = get(url)
+    return parse_teams_page(response.text)
+
+
+def fetch_all_teams() -> list[Team]:
     all_teams: list[Team] = []
     errors: list[str] = []
-    for category in CATEGORY_FILTERS:
+    for name, url in TEAM_PAGES.items():
         try:
-            all_teams.extend(fetch_teams_for_category(category, year))
-        except Exception as exc:  # noqa: BLE001 - bewusst breit, siehe Docstring
-            logger.warning("Team-Scraping für Kategorie '%s' fehlgeschlagen: %s", category, exc)
-            errors.append(f"{category}: {exc}")
+            teams = fetch_teams_from_page(url)
+            if not teams:
+                raise ValueError(
+                    f"Keine Teams auf Seite '{name}' gefunden - Struktur hat sich "
+                    "vermutlich geändert."
+                )
+            all_teams.extend(teams)
+        except Exception as exc:  # noqa: BLE001 - bewusst breit, siehe Modul-Docstring
+            logger.warning("Team-Scraping für Seite '%s' fehlgeschlagen: %s", name, exc)
+            errors.append(f"{name}: {exc}")
     if not all_teams and errors:
         raise RuntimeError("; ".join(errors))
     return all_teams

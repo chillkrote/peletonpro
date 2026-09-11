@@ -24,7 +24,7 @@ SCRAPER_USER_AGENT = os.environ.get(
 SCRAPER_REQUEST_DELAY_SECONDS = float(os.environ.get("SCRAPER_REQUEST_DELAY_SECONDS", "2.0"))
 SCRAPER_TIMEOUT_SECONDS = float(os.environ.get("SCRAPER_TIMEOUT_SECONDS", "15.0"))
 
-RACE_SEASON_YEAR = int(os.environ.get("RACE_SEASON_YEAR", "2025"))
+RACE_SEASON_YEAR = int(os.environ.get("RACE_SEASON_YEAR", "2026"))
 
 NEWS_FEEDS = [
     {"name": "Cyclingnews", "url": "https://www.cyclingnews.com/feeds/news/"},

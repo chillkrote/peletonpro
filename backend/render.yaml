@@ -10,7 +10,7 @@ services:
       - key: CORS_ORIGINS
         value: https://chillkrote.github.io
       - key: RACE_SEASON_YEAR
-        value: "2025"
+        value: "2026"
     # Hinweis: Render's kostenloser Plan hat kein persistentes Disk-Volume -
     # der JSON-Cache unter CACHE_DIR geht bei jedem Deploy/Neustart verloren.
     # Das ist unkritisch, da der Scheduler beim Start sofort neu scraped.
