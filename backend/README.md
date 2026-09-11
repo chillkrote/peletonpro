@@ -90,6 +90,61 @@ Selektor ablesen).
   Verantwortung dafür liegt beim Betreiber dieser Seite, nicht bei diesem
   Code.
 
+### Bekanntes Problem: procyclingstats.com blockiert Cloud-Hosting (Stand 2026-09-11)
+
+Im echten Deployment auf Render.com liefert procyclingstats.com auf **jeden**
+Request (`/teams/worldtour`, `/teams/continental`, `/races.php`) durchgehend
+`403 Forbidden` - unabhängig vom `User-Agent` (getestet mit dem
+transparenten Bot-UA und mit einem vollständigen Chrome-UA, beides ohne
+Erfolg). Das deutet auf eine IP-basierte Blockierung von
+Cloud-/Hosting-Adressbereichen oder eine TLS-/JS-basierte Bot-Erkennung
+hin, die ein einfacher HTTP-Client grundsätzlich nicht umgehen kann.
+
+Es wurde bewusst **keine weitere Umgehung versucht** (kein Proxy-Rotieren,
+kein Headless-Browser-Stealth, kein TLS-Fingerprint-Spoofing) - das wäre
+ein Versuch, den Bot-Schutz der Seite gegen ihren erklärten Willen zu
+umgehen, nicht nur ein Konfigurationsproblem zu beheben. Der Newsfeed
+(Cyclingnews + Google News RSS) ist davon nicht betroffen und funktioniert
+im Live-Deployment fehlerfrei (150 Einträge beim ersten Test).
+
+Optionen für Teams/Rennkalender, falls das Problem bestehen bleibt:
+1. Alternative Datenquelle suchen, die Cloud-Hosting nicht blockiert.
+2. Auf manuell/periodisch gepflegte Daten umstellen (kein Live-Scraping).
+3. Scraper von einer nicht-blockierten IP aus laufen lassen (z.B. eigener
+   Server statt Cloud-Hosting) - rechtliche/ethische Bewertung vorher
+   selbst vornehmen.
+
+### uci.org als Alternative geprüft (Stand 2026-09-11) - nicht per einfachem HTTP-Scraping nutzbar
+
+Auf expliziten Wunsch wurde geprüft, ob `uci.org` (offizielle UCI-Seite) als
+Datenquelle für Teams taugt. Ergebnis, verifiziert über eine temporäre
+Diagnose-Route im Live-Deployment (per Render-Logs ausgewertet, danach
+wieder entfernt):
+
+- `https://www.uci.org/road/teams` ist von Render aus erreichbar (Status
+  200, kein IP-Block wie bei procyclingstats.com).
+- Die Seite ist aber eine **client-seitig gerenderte Single-Page-App**:
+  Das Server-HTML enthält nur ein Navigations-Grundgerüst, einen
+  Google-Tag-Manager-Block und einen großen `webSettings`-JS-Konfigurationsblock
+  (i18n-Strings für Kalender/Rankings/Team-Details usw.), aber keine
+  einzige echte Team- oder Fahrer-Bezeichnung im HTML.
+- Es gibt genau ein gebündeltes Skript (`/assets/<version>/main.js`), keine
+  im Quelltext sichtbaren `/api/`- oder GraphQL-Endpunkte, und die
+  Navigations-Links nutzen 22-stellige Hash-IDs (z.B.
+  `/for-uci-teams/1XCm9CiRz9q5DHMCXOYCyN`) - typisch für eine Headless-CMS-
+  Anbindung (z.B. Contentful), deren Daten erst nach Ausführung des
+  JavaScript-Bundles im Browser nachgeladen werden.
+- Die Seite läuft zusätzlich hinter Cloudflare (`cdn-cgi/scripts/...`).
+
+Ein einfacher HTTP-Client (wie unser `httpx`-basierter Scraper) bekommt hier
+also grundsätzlich keine Team-Daten zu sehen, unabhängig von Blocking -
+es fehlt schlicht am Rendern. Das würde einen Headless-Browser (z.B.
+Playwright) im Backend erfordern, was auf Renders kostenlosem Plan wegen
+RAM-/Zeitlimits kaum praktikabel ist und zusätzlich an Cloudflares
+Bot-Erkennung scheitern könnte. uci.org wird daher **nicht** als
+Datenquelle verwendet; procyclingstats.com bleibt der einzige (aktuell
+blockierte) Scraping-Kandidat für Teams/Rennkalender, siehe oben.
+
 ## Lokal starten
 
 ```bash
@@ -118,6 +173,14 @@ API läuft dann unter `http://localhost:8001`, z.B.
    jedem Neustart/Deploy verloren. Unkritisch, da der Scheduler beim Start
    sofort neu scraped (dauert wenige Sekunden bis Minuten, je nach Anzahl
    Requests).
+5. **Python-Version ist auf 3.11 gepinnt** (`backend/.python-version`).
+   Ohne diese Datei wählt Render standardmäßig die neueste Python-Version
+   (aktuell 3.14), für die es noch kein vorgebautes Wheel für
+   `pydantic-core==2.23.4` gibt - pip versucht dann, es aus Rust-Quellcode
+   zu bauen, was in Renders Build-Sandbox an einem read-only
+   Cargo-Cache-Verzeichnis scheitert (`Build failed`). Bei einem Upgrade
+   von FastAPI/Pydantic kann die gepinnte Version ggf. wieder angehoben
+   werden, sobald aktuelle Wheels verfügbar sind.
 
 ## API-Endpunkte
 
