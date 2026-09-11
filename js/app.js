@@ -66,10 +66,10 @@ class RadsportApp {
     }
 
     updateStats() {
-        this.totalTeamsEl.textContent = TEAMS.length;
-        this.totalRacesEl.textContent = RACES.length;
+        if (this.totalTeamsEl) this.totalTeamsEl.textContent = TEAMS.length;
+        if (this.totalRacesEl) this.totalRacesEl.textContent = RACES.length;
         const nextRace = getUpcomingRaces(1)[0];
-        if (nextRace) {
+        if (nextRace && this.nextRaceDateEl) {
             const nextRaceDate = new Date(nextRace.startDate);
             this.nextRaceDateEl.textContent = nextRaceDate.toLocaleDateString('de-DE', {
                 day: '2-digit',
@@ -114,7 +114,8 @@ class RadsportApp {
         this.teamsGrid.innerHTML = teamsToRender.map(team => `
             <div class="team-card" data-team-id="${team.id}" data-category="${team.category}">
                 <div class="team-logo">
-                    <img src="${team.logo}" alt="${team.name}" onerror="this.src='https://via.placeholder.com/100x100/333/fff?text=${team.code}'">
+                    <img src="${team.logo}" alt="${team.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <i class="fas fa-shield-alt" style="display:none;"></i>
                 </div>
                 <h3>${team.name}</h3>
                 <span class="team-category ${team.category}">
