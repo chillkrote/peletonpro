@@ -1,17 +1,24 @@
 // ===== LIVE RESULTS MODULE =====
+// Lädt Ergebnisse + Rennen vom Backend und aktualisiert sich selbstständig
+// per Polling, damit während eines laufenden Rennens neue Zwischenstände
+// ohne Neuladen der Seite erscheinen.
+const LIVE_POLL_INTERVAL_MS = 60 * 1000;
+
 class LiveResultsManager {
     constructor() {
         this.liveResultsContainer = document.getElementById('live-results');
         this.liveBadge = document.getElementById('live-badge');
         this.filterButtons = document.querySelectorAll('#live .filter-btn');
         this.currentFilter = 'all';
+        this.races = [];
+        this.results = [];
         this.init();
     }
 
-    init() {
+    async init() {
         this.setupFilters();
-        this.updateLiveBadge();
-        this.renderLiveResults();
+        await this.loadData();
+        setInterval(() => this.loadData(), LIVE_POLL_INTERVAL_MS);
     }
 
     setupFilters() {
@@ -25,28 +32,53 @@ class LiveResultsManager {
         });
     }
 
+    async loadData() {
+        try {
+            const [racesRes, resultsRes] = await Promise.all([Api.getRaces(), Api.getResults()]);
+            this.races = racesRes.races || [];
+            this.results = resultsRes.results || [];
+            this.updateLiveBadge();
+            this.renderLiveResults();
+        } catch (err) {
+            console.error('Fehler beim Laden der Live-Ergebnisse:', err);
+            this.renderLoadError();
+        }
+    }
+
+    getRaceById(id) {
+        return this.races.find(race => race.id === id);
+    }
+
+    getUpcomingRaces(limit = 1) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        return [...this.races]
+            .filter(race => new Date(race.start_date) >= today)
+            .sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
+            .slice(0, limit);
+    }
+
     updateLiveBadge() {
         if (!this.liveBadge) return;
-        const liveCount = getLiveResults().length;
+        const liveCount = this.results.filter(r => r.status === 'live').length;
         this.liveBadge.textContent = liveCount;
         this.liveBadge.style.display = liveCount > 0 ? 'inline-block' : 'none';
     }
 
     getFilteredResults() {
-        const allResults = [...getLiveResults(), ...getFinishedResults(10), ...getUpcomingResults(10)];
         switch (this.currentFilter) {
             case 'wt':
-                return allResults.filter(result => {
-                    const race = getRaceById(result.raceId);
+                return this.results.filter(result => {
+                    const race = this.getRaceById(result.race_id);
                     return race && race.category === 'wt';
                 });
             case 'pro':
-                return allResults.filter(result => {
-                    const race = getRaceById(result.raceId);
+                return this.results.filter(result => {
+                    const race = this.getRaceById(result.race_id);
                     return race && race.category === 'pro';
                 });
             default:
-                return allResults;
+                return this.results;
         }
     }
 
@@ -54,18 +86,18 @@ class LiveResultsManager {
         if (!timeStr) return '-';
         const parts = timeStr.split(':');
         if (parts.length === 3) return `${parts[0]}h ${parts[1]}' ${parts[2]}"`;
-        else if (parts.length === 2) return `${parts[0]}' ${parts[1]}"`;
+        if (parts.length === 2) return `${parts[0]}' ${parts[1]}"`;
         return timeStr;
     }
 
     formatDate(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
     }
 
     formatTimeOfDay(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     }
 
     getStatusColor(status) {
@@ -77,29 +109,39 @@ class LiveResultsManager {
         }
     }
 
+    renderLoadError() {
+        if (!this.liveResultsContainer) return;
+        this.liveResultsContainer.innerHTML = `
+            <div class="no-results">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Live-Ergebnisse konnten nicht geladen werden. Bitte später erneut versuchen.</p>
+            </div>
+        `;
+    }
+
     renderLiveResults() {
+        if (!this.liveResultsContainer) return;
         const results = this.getFilteredResults();
         if (results.length === 0) {
+            const nextRace = this.getUpcomingRaces(1)[0];
             this.liveResultsContainer.innerHTML = `
                 <div class="no-results">
                     <i class="fas fa-exclamation-triangle"></i>
                     <p>Keine Live-Ergebnisse verfügbar</p>
-                    <p>Nächstes Rennen: <strong id="next-race-name">-</strong></p>
+                    <p>Nächstes Rennen: <strong>${nextRace ? `${escapeHtml(nextRace.name)} (${this.formatDate(nextRace.start_date)})` : '-'}</strong></p>
                 </div>
             `;
-            const nextRace = getUpcomingRaces(1)[0];
-            if (nextRace) document.getElementById('next-race-name').textContent = `${nextRace.name} (${this.formatDate(nextRace.startDate)})`;
             return;
         }
         this.liveResultsContainer.innerHTML = results.map(result => {
-            const race = getRaceById(result.raceId);
-            const progress = result.totalKm > 0 ? Math.round((result.currentKm / result.totalKm) * 100) : 0;
+            const race = this.getRaceById(result.race_id);
+            const progress = result.total_km > 0 ? Math.round((result.current_km / result.total_km) * 100) : 0;
             return `
-                <div class="live-card" data-race-id="${result.raceId}" data-status="${result.status}">
+                <div class="live-card" data-race-id="${escapeHtml(result.race_id)}" data-status="${escapeHtml(result.status)}">
                     <div class="live-card-header">
                         <div>
-                            <h3>${race ? race.name : result.raceName}</h3>
-                            ${race ? `<p>${race.country} | ${race.type === 'gt' ? 'Grand Tour' : race.stages > 1 ? `Etappe ${result.stage} von ${race.stages}` : 'Eintagesrennen'}</p>` : ''}
+                            <h3>${escapeHtml(race ? race.name : result.race_name)}</h3>
+                            ${race ? `<p>${escapeHtml(race.country)} | ${race.type === 'gt' ? 'Grand Tour' : race.stages > 1 ? `Etappe ${result.stage ?? '-'} von ${race.stages}` : 'Eintagesrennen'}</p>` : ''}
                         </div>
                         <span class="live-status ${this.getStatusColor(result.status)}">
                             ${result.status === 'live' ? '🔴 LIVE' : result.status === 'finished' ? '✅ Beendet' : '⏳ Kommt bald'}
@@ -111,21 +153,21 @@ class LiveResultsManager {
                                 <div class="progress-bar">
                                     <div class="progress-fill" style="width: ${progress}%"></div>
                                 </div>
-                                <p>${result.currentKm} km / ${result.totalKm} km (${progress}%)</p>
+                                <p>${result.current_km ?? '-'} km / ${result.total_km ?? '-'} km (${progress}%)</p>
                             </div>
                             <div class="live-race-info">
-                                <span><i class="fas fa-clock"></i> Start: ${this.formatTimeOfDay(result.startTime)}</span>
-                                <span><i class="fas fa-flag-checkered"></i> Ziel: ~${this.formatTimeOfDay(result.estimatedFinish)}</span>
+                                <span><i class="fas fa-clock"></i> Start: ${this.formatTimeOfDay(result.start_time)}</span>
+                                <span><i class="fas fa-flag-checkered"></i> Ziel: ~${this.formatTimeOfDay(result.estimated_finish)}</span>
                             </div>
                         ` : result.status === 'finished' ? `
                             <div class="live-race-info">
-                                <span><i class="fas fa-clock"></i> Beendet: ${this.formatTimeOfDay(result.estimatedFinish)}</span>
-                                <span><i class="fas fa-trophy"></i> Sieger: ${result.results[0] ? result.results[0].rider : '-'}</span>
+                                <span><i class="fas fa-clock"></i> Beendet: ${this.formatTimeOfDay(result.estimated_finish)}</span>
+                                <span><i class="fas fa-trophy"></i> Sieger: ${escapeHtml(result.results?.[0]?.rider ?? '-')}</span>
                             </div>
                         ` : `
                             <div class="live-race-info">
-                                <span><i class="fas fa-clock"></i> Start: ${this.formatTimeOfDay(result.startTime)}</span>
-                                <span><i class="fas fa-calendar"></i> ${this.formatDate(result.startTime)}</span>
+                                <span><i class="fas fa-clock"></i> Start: ${this.formatTimeOfDay(result.start_time)}</span>
+                                <span><i class="fas fa-calendar"></i> ${this.formatDate(result.start_time)}</span>
                             </div>
                         `}
                         ${result.results && result.results.length > 0 ? `
@@ -134,8 +176,8 @@ class LiveResultsManager {
                                 ${result.results.slice(0, 5).map((riderResult, index) => `
                                     <div class="live-result-item">
                                         <span class="position ${index === 0 ? 'winner' : ''}">${riderResult.position}</span>
-                                        <span class="rider">${riderResult.rider}</span>
-                                        <span class="team">${riderResult.team}</span>
+                                        <span class="rider">${escapeHtml(riderResult.rider)}</span>
+                                        <span class="team">${escapeHtml(riderResult.team)}</span>
                                         <span class="time">${this.formatTime(riderResult.time)}</span>
                                     </div>
                                 `).join('')}

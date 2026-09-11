@@ -1,0 +1,37 @@
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .config import CORS_ORIGINS
+from .routers import news, races, results, teams
+from .scheduler import start_scheduler
+
+logging.basicConfig(level=logging.INFO)
+
+app = FastAPI(title="PelotonPro API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+app.include_router(teams.router)
+app.include_router(races.router)
+app.include_router(results.router)
+app.include_router(news.router)
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
+    # startet sofort (next_run_time=now), blockiert also nicht den
+    # FastAPI-Startvorgang selbst.
+    app.state.scheduler = start_scheduler()
