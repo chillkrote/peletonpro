@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Races – PelotonPro</title>
-    <meta name="description" content="Der komplette Rennkalender der UCI World Tour mit Ergebnissen.">
+    <meta name="description" content="Der komplette Rennkalender aller UCI-WorldTour-, ProSeries- und Continental-Tour-Rennen mit Ergebnissen.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,8 +18,10 @@
     <main>
         <div class="page-head">
             <h1>Races</h1>
-            <p>Kalendarisch sortiert · laufende Rennen zuerst</p>
+            <p id="races-subtitle">Kalendarisch sortiert · laufende Rennen und Grand Tours zuerst</p>
         </div>
+        <div class="tab-switch" id="season-tabs"></div>
+        <div class="news-filters" id="category-filters"></div>
         <div id="races-content"></div>
     </main>
 
