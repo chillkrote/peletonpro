@@ -16,11 +16,13 @@ siehe is_configured().
 """
 import logging
 import os
+import threading
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from .config import RACE_SEASON_YEAR
 from .models import Rider, RiderSeason, RiderStint, Team
@@ -28,6 +30,61 @@ from .models import Rider, RiderSeason, RiderStint, Team
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# Verbindungs-Pool statt einer neuen Verbindung pro Funktionsaufruf. Vorher
+# öffnete jeder Aufruf von _connect() eine frische Postgres-Verbindung; ein
+# einzelner Kader-Lauf (18 Teams + ~517 Fahrer) kam so auf über 500
+# Verbindungsaufbauten, jeweils mit TCP- und TLS-Handshake zu Renders
+# Postgres. Der kostenlose Plan erlaubt nur wenige gleichzeitige
+# Verbindungen - das war die harte Grenze vor jeder Vergrößerung des
+# Bestands.
+#
+# Bewusst klein dimensioniert: die Anwendung hat einen Web-Prozess und
+# einen Scheduler mit wenigen Threads, mehr Verbindungen bringen nichts und
+# verbrauchen auf dem Free-Plan nur das knappe Kontingent.
+DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
+DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "5"))
+DB_POOL_TIMEOUT_SECONDS = float(os.environ.get("DB_POOL_TIMEOUT_SECONDS", "30"))
+
+_pool: Optional[ConnectionPool] = None
+_pool_lock = threading.Lock()
+
+
+def _get_pool() -> ConnectionPool:
+    """Erzeugt den Pool beim ersten Zugriff (nicht beim Import), damit das
+    Modul auch ohne DATABASE_URL importierbar bleibt - die App soll ohne
+    Datenbank weiterlaufen, siehe is_configured()."""
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            if not DATABASE_URL:
+                raise RuntimeError(
+                    "DATABASE_URL ist nicht gesetzt - Fahrer-Datenbank nicht verfügbar."
+                )
+            _pool = ConnectionPool(
+                DATABASE_URL,
+                min_size=DB_POOL_MIN_SIZE,
+                max_size=DB_POOL_MAX_SIZE,
+                timeout=DB_POOL_TIMEOUT_SECONDS,
+                kwargs={"row_factory": dict_row},
+                open=True,
+            )
+            logger.info(
+                "Postgres-Pool geöffnet (min %d, max %d)", DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE
+            )
+    return _pool
+
+
+def close_pool() -> None:
+    """Beim Shutdown aufgerufen (siehe app/main.py). Idempotent."""
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+            logger.info("Postgres-Pool geschlossen.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS teams (
@@ -72,6 +129,17 @@ ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_url TEXT;
 ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_checked_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_riders_last_name ON riders (last_name, first_name);
 
+-- Teilindizes für die beiden Rückstands-Abfragen des Schedulers
+-- (get_riders_missing_history / get_riders_missing_strava, jeweils
+-- "WHERE ... IS NULL ORDER BY name LIMIT n"). Für `races` gab es das
+-- Gegenstück idx_races_missing_details schon, hier fehlte es: ohne Index
+-- ein Seq Scan plus Sortierung über die ganze Tabelle bei jedem Lauf, und
+-- der Job läuft alle drei Minuten.
+CREATE INDEX IF NOT EXISTS idx_riders_missing_history ON riders (name)
+    WHERE history_fetched_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_riders_missing_strava ON riders (name)
+    WHERE strava_checked_at IS NULL;
+
 -- Platzhalter für UCI-Ranking-Punkte pro Fahrer und Saison: aktuell noch
 -- keine erreichbare Quelle zum automatischen Befüllen (siehe README,
 -- Abschnitt "Bekannte Lücke"), aber eine feste Zeile pro (rider_id, year)
@@ -93,9 +161,14 @@ def is_configured() -> bool:
 
 @contextmanager
 def _connect() -> Iterator[psycopg.Connection]:
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL ist nicht gesetzt - Fahrer-Datenbank nicht verfügbar.")
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+    """Leiht eine Verbindung aus dem Pool. Signatur und Semantik sind
+    absichtlich unverändert gegenüber der früheren Fassung mit
+    psycopg.connect(): auch pool.connection() committet beim regulären
+    Verlassen des Blocks und rollt bei einer Exception zurück, gibt die
+    Verbindung danach aber zurück in den Pool statt sie zu schließen.
+    Dadurch musste kein einziger der vielen Aufrufer in db.py und
+    db_races.py angepasst werden."""
+    with _get_pool().connection() as conn:
         yield conn
 
 
@@ -108,31 +181,90 @@ def init_schema() -> None:
     logger.info("Fahrer-Datenbank-Schema geprüft/erstellt.")
 
 
-def upsert_team(team: Team) -> None:
+_UPSERT_TEAM_SQL = """
+    INSERT INTO teams (id, name, category, country, code, logo, wiki_url, last_updated)
+    VALUES (%(id)s, %(name)s, %(category)s, %(country)s, %(code)s, %(logo)s, %(wiki_url)s, now())
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        category = EXCLUDED.category,
+        country = EXCLUDED.country,
+        code = EXCLUDED.code,
+        logo = EXCLUDED.logo,
+        wiki_url = EXCLUDED.wiki_url,
+        last_updated = now()
+"""
+
+
+def _team_params(team: Team) -> dict:
+    return {
+        "id": team.id,
+        "name": team.name,
+        "category": team.category,
+        "country": team.country,
+        "code": team.code,
+        "logo": team.logo,
+        "wiki_url": team.source_url,
+    }
+
+
+def upsert_teams(teams: list[Team]) -> int:
+    """Schreibt mehrere Teams in EINER Verbindung und Transaktion
+    (executemany) statt eine Verbindung pro Team. Gibt die Zahl der
+    übergebenen Zeilen zurück."""
+    if not teams:
+        return 0
     with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO teams (id, name, category, country, code, logo, wiki_url, last_updated)
-            VALUES (%(id)s, %(name)s, %(category)s, %(country)s, %(code)s, %(logo)s, %(wiki_url)s, now())
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                category = EXCLUDED.category,
-                country = EXCLUDED.country,
-                code = EXCLUDED.code,
-                logo = EXCLUDED.logo,
-                wiki_url = EXCLUDED.wiki_url,
-                last_updated = now()
-            """,
-            {
-                "id": team.id,
-                "name": team.name,
-                "category": team.category,
-                "country": team.country,
-                "code": team.code,
-                "logo": team.logo,
-                "wiki_url": team.source_url,
-            },
+        conn.cursor().executemany(_UPSERT_TEAM_SQL, [_team_params(t) for t in teams])
+    return len(teams)
+
+
+def upsert_team(team: Team) -> None:
+    """Einzel-Variante - delegiert an upsert_teams, damit das SQL nur an
+    einer Stelle steht."""
+    upsert_teams([team])
+
+
+_UPSERT_RIDER_SQL = """
+    INSERT INTO riders (id, name, first_name, last_name, country, birth_date, wiki_url, current_team_id, last_updated)
+    VALUES (%(id)s, %(name)s, %(first_name)s, %(last_name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, now())
+    ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        country = COALESCE(EXCLUDED.country, riders.country),
+        birth_date = COALESCE(EXCLUDED.birth_date, riders.birth_date),
+        wiki_url = EXCLUDED.wiki_url,
+        current_team_id = EXCLUDED.current_team_id,
+        last_updated = now()
+"""
+
+RIDER_FIELDS = (
+    "id", "name", "first_name", "last_name", "country", "birth_date",
+    "wiki_url", "current_team_id",
+)
+
+
+def upsert_riders(riders: list[dict]) -> int:
+    """Schreibt mehrere Fahrer in EINER Verbindung und Transaktion
+    (executemany). Jedes dict braucht die Schlüssel aus RIDER_FIELDS.
+
+    Wichtig: derselbe Fahrer darf innerhalb eines Aufrufs nur EINMAL
+    vorkommen. Postgres kann eine Zeile pro Statement nicht zweimal per
+    ON CONFLICT aktualisieren ("ON CONFLICT DO UPDATE command cannot affect
+    row a second time"); bei executemany ist jede Zeile ein eigenes
+    Statement, sodass es hier technisch durchläuft - fachlich wäre es aber
+    ein stiller Last-Write-Wins wie bisher. Der Aufrufer entdoppelt daher
+    vorher (siehe scheduler.refresh_riders)."""
+    if not riders:
+        return 0
+    missing = [k for k in RIDER_FIELDS if k not in riders[0]]
+    if missing:
+        raise ValueError(f"Fahrer-Datensatz fehlen Felder: {', '.join(missing)}")
+    with _connect() as conn:
+        conn.cursor().executemany(
+            _UPSERT_RIDER_SQL, [{k: r[k] for k in RIDER_FIELDS} for r in riders]
         )
+    return len(riders)
 
 
 def upsert_rider(
@@ -145,32 +277,18 @@ def upsert_rider(
     wiki_url: str,
     current_team_id: Optional[str],
 ) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO riders (id, name, first_name, last_name, country, birth_date, wiki_url, current_team_id, last_updated)
-            VALUES (%(id)s, %(name)s, %(first_name)s, %(last_name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, now())
-            ON CONFLICT (id) DO UPDATE SET
-                name = EXCLUDED.name,
-                first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name,
-                country = COALESCE(EXCLUDED.country, riders.country),
-                birth_date = COALESCE(EXCLUDED.birth_date, riders.birth_date),
-                wiki_url = EXCLUDED.wiki_url,
-                current_team_id = EXCLUDED.current_team_id,
-                last_updated = now()
-            """,
-            {
-                "id": rider_id,
-                "name": name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "country": country,
-                "birth_date": birth_date,
-                "wiki_url": wiki_url,
-                "current_team_id": current_team_id,
-            },
-        )
+    """Einzel-Variante - delegiert an upsert_riders, damit das SQL nur an
+    einer Stelle steht."""
+    upsert_riders([{
+        "id": rider_id,
+        "name": name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "country": country,
+        "birth_date": birth_date,
+        "wiki_url": wiki_url,
+        "current_team_id": current_team_id,
+    }])
 
 
 def get_riders_missing_history(limit: int) -> list[dict]:
@@ -188,14 +306,20 @@ def replace_stints(rider_id: str, stints: list[RiderStint]) -> None:
     (neuer Wechsel = neue Zeile, alte Zeilen bleiben unverändert)."""
     with _connect() as conn:
         conn.execute("DELETE FROM rider_team_stints WHERE rider_id = %s", (rider_id,))
-        for stint in stints:
-            team_id = None
-            if stint.team_wiki_url:
-                row = conn.execute(
-                    "SELECT id FROM teams WHERE wiki_url = %s", (stint.team_wiki_url,)
-                ).fetchone()
-                team_id = row["id"] if row else None
-            conn.execute(
+
+        # Alle Team-Wiki-URLs der Stints in EINER Abfrage auflösen statt
+        # einer Abfrage pro Stint (vorher N+1 - bei ~500 Fahrern mit je
+        # 3-8 Stationen mehrere tausend Einzelabfragen beim Erstaufbau).
+        urls = [s.team_wiki_url for s in stints if s.team_wiki_url]
+        team_id_by_url: dict[str, str] = {}
+        if urls:
+            rows = conn.execute(
+                "SELECT id, wiki_url FROM teams WHERE wiki_url = ANY(%s)", (urls,)
+            ).fetchall()
+            team_id_by_url = {r["wiki_url"]: r["id"] for r in rows}
+
+        if stints:
+            conn.cursor().executemany(
                 """
                 INSERT INTO rider_team_stints (rider_id, team_id, team_name, start_year, end_year)
                 VALUES (%s, %s, %s, %s, %s)
@@ -203,7 +327,16 @@ def replace_stints(rider_id: str, stints: list[RiderStint]) -> None:
                     team_id = EXCLUDED.team_id,
                     end_year = EXCLUDED.end_year
                 """,
-                (rider_id, team_id, stint.team_name, stint.start_year, stint.end_year),
+                [
+                    (
+                        rider_id,
+                        team_id_by_url.get(s.team_wiki_url) if s.team_wiki_url else None,
+                        s.team_name,
+                        s.start_year,
+                        s.end_year,
+                    )
+                    for s in stints
+                ],
             )
         conn.execute(
             "UPDATE riders SET history_fetched_at = now() WHERE id = %s", (rider_id,)

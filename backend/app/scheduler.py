@@ -119,31 +119,60 @@ def refresh_riders() -> None:
         return
 
     teams = [Team(**t) for t in teams_data]
-    for team in teams:
-        try:
-            db.upsert_team(team)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Team-Upsert für '%s' fehlgeschlagen: %s", team.name, exc)
+    try:
+        db.upsert_teams(teams)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Team-Upsert fehlgeschlagen (%d Teams): %s", len(teams), exc)
 
-    total_riders = 0
+    # Erst alle Kader sammeln, dann EINMAL schreiben. Vorher eine eigene
+    # Postgres-Verbindung pro Fahrer - bei ~517 Fahrern über 500
+    # Verbindungsaufbauten pro Lauf. Die Fehlerbehandlung pro Team bleibt:
+    # ein Team, dessen Wikipedia-Seite sich geändert hat, darf die übrigen
+    # nicht mitreißen.
+    rider_rows: list[dict] = []
+    seen_rider_ids: set[str] = set()
+    duplicates = 0
     for team in teams:
         try:
-            for rider_id, rider in roster_riders_for_team(team):
-                first_name, last_name = split_name(rider.name)
-                db.upsert_rider(
-                    rider_id=rider_id,
-                    name=rider.name,
-                    first_name=first_name,
-                    last_name=last_name,
-                    country=rider.country,
-                    birth_date=rider.birth_date,
-                    wiki_url=rider.wiki_url,
-                    current_team_id=team.id,
-                )
-                total_riders += 1
+            roster = roster_riders_for_team(team)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Kader-Scraping für '%s' fehlgeschlagen: %s", team.name, exc)
-    logger.info("Fahrer-Kader aktualisiert: %d Zuordnungen über %d Teams", total_riders, len(teams))
+            continue
+        for rider_id, rider in roster:
+            # Ein Fahrer kann auf zwei Kadern stehen (bei Wechseln listen ihn
+            # beide Team-Artikel). Innerhalb eines Batches muss jede ID genau
+            # einmal vorkommen; der erste Treffer gewinnt. Dass die Auswahl
+            # hier willkürlich ist, war auch vorher so (Last-Write-Wins über
+            # die Iterationsreihenfolge) - sie ist jetzt nur sichtbar und
+            # gezählt. Die saubere Lösung ist eine Zuordnung pro Saison,
+            # siehe README ("Bekannte Lücken").
+            if rider_id in seen_rider_ids:
+                duplicates += 1
+                continue
+            seen_rider_ids.add(rider_id)
+            first_name, last_name = split_name(rider.name)
+            rider_rows.append({
+                "id": rider_id,
+                "name": rider.name,
+                "first_name": first_name,
+                "last_name": last_name,
+                "country": rider.country,
+                "birth_date": rider.birth_date,
+                "wiki_url": rider.wiki_url,
+                "current_team_id": team.id,
+            })
+
+    try:
+        written = db.upsert_riders(rider_rows)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Fahrer-Upsert fehlgeschlagen (%d Fahrer): %s", len(rider_rows), exc)
+        written = 0
+    logger.info(
+        "Fahrer-Kader aktualisiert: %d Fahrer über %d Teams%s",
+        written,
+        len(teams),
+        f", {duplicates} Doppelnennungen übersprungen" if duplicates else "",
+    )
 
     pending = db.get_riders_missing_history(limit=RIDER_HISTORY_BATCH_SIZE)
     fetched = 0
