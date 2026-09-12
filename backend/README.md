@@ -441,6 +441,68 @@ API läuft dann unter `http://localhost:8001`, z.B.
    nutzen oder den Service während des Backfills regelmäßig anpingen
    (z.B. `curl .../api/health` per Cron).
 
+## Datenbank-Zugriff: Verbindungs-Pool
+
+Alle Zugriffe in `app/db.py` und `app/db_races.py` laufen über einen
+`psycopg_pool.ConnectionPool`, der beim ersten Zugriff entsteht (nicht beim
+Import - das Modul muss auch ohne `DATABASE_URL` importierbar bleiben) und im
+`lifespan` von `app/main.py` geschlossen wird.
+
+Vorher öffnete **jeder** Aufruf von `_connect()` eine eigene Postgres-
+Verbindung. Gemessen an einem Kader-Lauf (18 Teams + 517 Fahrer):
+
+| | vorher | nachher |
+|---|---|---|
+| Verbindungsaufbauten | 535 | 1 (aus dem Pool geliehen) |
+| SQL-Abfragen | 535 | 2 |
+| Dauer (lokal, ohne TLS) | 2,83 s | 0,02 s |
+
+Über TLS zu Renders Postgres fällt das deutlich stärker ins Gewicht, und der
+kostenlose Plan erlaubt nur wenige gleichzeitige Verbindungen - das war die
+harte Grenze vor jeder Vergrößerung des Bestands.
+
+`_connect()` hat Signatur **und Semantik** behalten: `pool.connection()`
+committet beim regulären Verlassen des Blocks und rollt bei einer Exception
+zurück, genau wie `psycopg.connect()` vorher. Deshalb musste kein einziger
+der vielen Aufrufer angepasst werden.
+
+Größe per Env-Var (`DB_POOL_MIN_SIZE`, `DB_POOL_MAX_SIZE`,
+`DB_POOL_TIMEOUT_SECONDS`, siehe `.env.example`). Bewusst klein: ein
+Web-Prozess plus ein Scheduler mit wenigen Threads braucht nicht mehr.
+
+### Batch-Schreibzugriffe
+
+`upsert_teams(list)` und `upsert_riders(list)` schreiben per `executemany` in
+einer Transaktion; die Einzel-Varianten `upsert_team`/`upsert_rider`
+delegieren daran, damit das SQL nur an einer Stelle steht.
+`scheduler.refresh_riders` sammelt erst alle Kader und schreibt dann einmal -
+die Fehlerbehandlung pro Team bleibt, ein Team mit geänderter Wikipedia-Seite
+reißt die übrigen nicht mit.
+
+Steht ein Fahrer auf zwei Kadern (bei Wechseln listen ihn beide
+Team-Artikel), gewinnt jetzt der **erste** Treffer und die Doppelnennung wird
+gezählt und geloggt. Vorher gewann willkürlich der letzte, ohne Hinweis. Die
+saubere Lösung ist eine Zuordnung pro Saison statt eines einzelnen
+`current_team_id` - siehe "Bekannte Lücken".
+
+### Aufgelöste N+1-Abfragen
+
+| Stelle | vorher | nachher |
+|---|---|---|
+| `db.replace_stints` (4 Stints) | 8 Abfragen | 3 |
+| `db_races.get_race` (3 Etappen) | 6 Abfragen | 4 |
+| `db_races.get_race` (21 Etappen) | 24 Abfragen | 4 |
+
+`replace_stints` löst alle Team-Wiki-URLs in einer Abfrage
+(`WHERE wiki_url = ANY(%s)`) auf statt einer pro Stint; `get_race` holt die
+Ergebnisse aller Etappen mit `WHERE stage_id = ANY(%s)` und gruppiert in
+Python.
+
+Dazu zwei Teilindizes auf `riders` für die Rückstands-Abfragen des
+Schedulers (`history_fetched_at IS NULL`, `strava_checked_at IS NULL`) - für
+`races` gab es das Gegenstück schon, hier fehlte es. `EXPLAIN` zeigt jetzt
+einen Index Scan statt Seq Scan plus Sortierung über die ganze Tabelle.
+
 ## Backup (`app/backup.py`)
 
 **Warum das nötig ist:** Die Produktionsdatenbank läuft auf Renders

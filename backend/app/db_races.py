@@ -361,30 +361,42 @@ def get_race(race_id: str) -> Optional[RaceRecord]:
             """,
             (race_id,),
         ).fetchall()
-        stages = []
-        for srow in stage_rows:
-            stage_result_rows = conn.execute(
+        # Etappen-Ergebnisse für ALLE Etappen in einer Abfrage holen und in
+        # Python nach stage_id gruppieren. Vorher eine Abfrage pro Etappe
+        # (N+1): eine Grande-Boucle-Detailseite kostete damit 23 Abfragen
+        # statt 3.
+        stage_ids = [srow["id"] for srow in stage_rows]
+        results_by_stage: dict[int, list[RaceResultEntry]] = {}
+        if stage_ids:
+            result_rows_all = conn.execute(
                 """
-                SELECT position, rider_name, team_name, time_or_gap
-                FROM race_results WHERE stage_id = %s ORDER BY position
+                SELECT stage_id, position, rider_name, team_name, time_or_gap
+                FROM race_results WHERE stage_id = ANY(%s) ORDER BY stage_id, position
                 """,
-                (srow["id"],),
+                (stage_ids,),
             ).fetchall()
-            stages.append(
-                RaceStage(
-                    stage_number=srow["stage_number"],
-                    date=srow["stage_date"].isoformat() if srow["stage_date"] else None,
-                    distance_km=float(srow["distance_km"]) if srow["distance_km"] is not None else None,
-                    elevation_m=srow["elevation_m"],
-                    start_location=srow["start_location"],
-                    end_location=srow["end_location"],
-                    results=[
-                        RaceResultEntry(position=r["position"], rider=r["rider_name"], team=r["team_name"], time_or_gap=r["time_or_gap"])
-                        for r in stage_result_rows
-                    ],
+            for r in result_rows_all:
+                results_by_stage.setdefault(r["stage_id"], []).append(
+                    RaceResultEntry(
+                        position=r["position"],
+                        rider=r["rider_name"],
+                        team=r["team_name"],
+                        time_or_gap=r["time_or_gap"],
+                    )
                 )
+
+        race.stages = [
+            RaceStage(
+                stage_number=srow["stage_number"],
+                date=srow["stage_date"].isoformat() if srow["stage_date"] else None,
+                distance_km=float(srow["distance_km"]) if srow["distance_km"] is not None else None,
+                elevation_m=srow["elevation_m"],
+                start_location=srow["start_location"],
+                end_location=srow["end_location"],
+                results=results_by_stage.get(srow["id"], []),
             )
-        race.stages = stages
+            for srow in stage_rows
+        ]
     return race
 
 
