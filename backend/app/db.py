@@ -270,3 +270,49 @@ def get_riders_missing_history_count() -> int:
             "SELECT count(*) AS n FROM riders WHERE history_fetched_at IS NULL"
         ).fetchone()
     return row["n"] if row else 0
+
+
+# ---------------------------------------------------------------------------
+# CSV-Export: liefert die Rohdaten je Tabelle (mit ein paar lesbaren
+# Zusatzspalten aus Joins) für app/routers/export.py. Bewusst getrennt von
+# den obigen Funktionen, die auf die API-Modelle (Rider/RiderStint) zugeschnitten
+# sind - der Export soll die Datenbank 1:1 nachvollziehbar machen.
+# ---------------------------------------------------------------------------
+
+
+def export_teams() -> list[dict]:
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT id, name, category, country, code, logo, wiki_url, last_updated
+            FROM teams ORDER BY name
+            """
+        ).fetchall()
+
+
+def export_riders() -> list[dict]:
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT r.id, r.name, r.country, r.birth_date, r.wiki_url,
+                   r.current_team_id, t.name AS current_team_name,
+                   r.history_fetched_at, r.last_updated
+            FROM riders r
+            LEFT JOIN teams t ON t.id = r.current_team_id
+            ORDER BY r.name
+            """
+        ).fetchall()
+
+
+def export_stints() -> list[dict]:
+    with _connect() as conn:
+        return conn.execute(
+            """
+            SELECT s.rider_id, r.name AS rider_name, s.team_id, s.team_name,
+                   t.wiki_url AS team_wiki_url, s.start_year, s.end_year
+            FROM rider_team_stints s
+            JOIN riders r ON r.id = s.rider_id
+            LEFT JOIN teams t ON t.id = s.team_id
+            ORDER BY r.name, s.start_year
+            """
+        ).fetchall()

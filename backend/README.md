@@ -205,6 +205,20 @@ roster = parse_team_roster(open("roster_section.html", encoding="utf-8").read())
 history = parse_rider_history(open("rider_infobox.html", encoding="utf-8").read())
 ```
 
+### CSV-Export
+
+`app/routers/export.py` liefert die drei Tabellen roh als CSV-Download
+(z.B. für Excel/Pandas, unabhängig von der JSON-API):
+
+| Endpunkt | Inhalt |
+|---|---|
+| `GET /api/export/teams.csv` | komplette `teams`-Tabelle |
+| `GET /api/export/riders.csv` | `riders` + aufgelöster `current_team_name` |
+| `GET /api/export/stints.csv` | `rider_team_stints` + aufgelöste `rider_name`/`team_wiki_url` |
+
+Wie `/api/riders*` liefert auch `/api/export/*` HTTP 503, solange
+`DATABASE_URL` nicht gesetzt ist.
+
 ## Lokal starten
 
 ```bash
