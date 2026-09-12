@@ -51,6 +51,11 @@ REFRESH_INTERVAL_NEWS = int(os.environ.get("REFRESH_INTERVAL_NEWS", str(15 * 60)
 REFRESH_INTERVAL_RIDERS = int(os.environ.get("REFRESH_INTERVAL_RIDERS", str(3 * 60)))
 RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
 
+# Strava-Profil-Abgleich über Wikidata (siehe scrapers/wikidata.py) - läuft
+# im selben Job wie die Historie, aber in größeren Batches, da hier je
+# Batch (bis zu 50 Titel) nur 2 Requests nötig sind statt einem pro Fahrer.
+STRAVA_BATCH_SIZE = int(os.environ.get("STRAVA_BATCH_SIZE", "50"))
+
 CACHE_DIR = os.environ.get(
     "CACHE_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 )

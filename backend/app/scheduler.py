@@ -18,12 +18,14 @@ from .config import (
     REFRESH_INTERVAL_RIDERS,
     REFRESH_INTERVAL_TEAMS,
     RIDER_HISTORY_BATCH_SIZE,
+    STRAVA_BATCH_SIZE,
 )
 from .models import Race, Team
 from .news.rss import fetch_all_news
+from .scrapers.wikidata import fetch_strava_urls
 from .scrapers.wikipedia import wiki_title_from_url
 from .scrapers.wikipedia_races import fetch_race_calendar, fetch_race_result
-from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team
+from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team, split_name
 from .scrapers.wikipedia_teams import fetch_current_worldteams
 
 logger = logging.getLogger(__name__)
@@ -121,9 +123,12 @@ def refresh_riders() -> None:
     for team in teams:
         try:
             for rider_id, rider in roster_riders_for_team(team):
+                first_name, last_name = split_name(rider.name)
                 db.upsert_rider(
                     rider_id=rider_id,
                     name=rider.name,
+                    first_name=first_name,
+                    last_name=last_name,
                     country=rider.country,
                     birth_date=rider.birth_date,
                     wiki_url=rider.wiki_url,
@@ -151,6 +156,23 @@ def refresh_riders() -> None:
             fetched,
             len(pending),
             remaining,
+        )
+
+    pending_strava = db.get_riders_missing_strava(limit=STRAVA_BATCH_SIZE)
+    if pending_strava:
+        titles = [wiki_title_from_url(r["wiki_url"]) for r in pending_strava]
+        try:
+            urls_by_title = fetch_strava_urls(titles)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Strava-Abgleich (Wikidata) fehlgeschlagen: %s", exc)
+            urls_by_title = {}
+        found = 0
+        for rider_row, title in zip(pending_strava, titles):
+            url = urls_by_title.get(title)
+            db.set_strava_url(rider_row["id"], url)
+            found += bool(url)
+        logger.info(
+            "Strava-Abgleich: %d Fahrer geprüft, %d mit Profil gefunden", len(pending_strava), found
         )
 
 

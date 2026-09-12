@@ -22,7 +22,8 @@ from typing import Iterator, Optional
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import Rider, RiderStint, Team
+from .config import RACE_SEASON_YEAR
+from .models import Rider, RiderSeason, RiderStint, Team
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,14 @@ CREATE TABLE IF NOT EXISTS rider_team_stints (
 );
 CREATE INDEX IF NOT EXISTS idx_stints_rider ON rider_team_stints (rider_id);
 CREATE INDEX IF NOT EXISTS idx_riders_current_team ON riders (current_team_id);
+
+-- Nachträglich ergänzt (Vor-/Nachname-Trennung + Strava-Profil-Abgleich):
+-- ALTER statt CREATE, da `riders` in Produktion bereits existiert.
+ALTER TABLE riders ADD COLUMN IF NOT EXISTS first_name TEXT;
+ALTER TABLE riders ADD COLUMN IF NOT EXISTS last_name TEXT;
+ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_url TEXT;
+ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_checked_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_riders_last_name ON riders (last_name, first_name);
 """
 
 
@@ -116,6 +125,8 @@ def upsert_team(team: Team) -> None:
 def upsert_rider(
     rider_id: str,
     name: str,
+    first_name: str,
+    last_name: str,
     country: Optional[str],
     birth_date: Optional[str],
     wiki_url: str,
@@ -124,10 +135,12 @@ def upsert_rider(
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO riders (id, name, country, birth_date, wiki_url, current_team_id, last_updated)
-            VALUES (%(id)s, %(name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, now())
+            INSERT INTO riders (id, name, first_name, last_name, country, birth_date, wiki_url, current_team_id, last_updated)
+            VALUES (%(id)s, %(name)s, %(first_name)s, %(last_name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, now())
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
                 country = COALESCE(EXCLUDED.country, riders.country),
                 birth_date = COALESCE(EXCLUDED.birth_date, riders.birth_date),
                 wiki_url = EXCLUDED.wiki_url,
@@ -137,6 +150,8 @@ def upsert_rider(
             {
                 "id": rider_id,
                 "name": name,
+                "first_name": first_name,
+                "last_name": last_name,
                 "country": country,
                 "birth_date": birth_date,
                 "wiki_url": wiki_url,
@@ -182,10 +197,25 @@ def replace_stints(rider_id: str, stints: list[RiderStint]) -> None:
         )
 
 
+def _row_to_rider(row: dict) -> Rider:
+    return Rider(
+        id=row["id"],
+        first_name=row["first_name"] or "",
+        last_name=row["last_name"] or row["name"],
+        name=row["name"],
+        country=row["country"],
+        birth_date=row["birth_date"].isoformat() if row["birth_date"] else None,
+        wiki_url=row["wiki_url"],
+        current_team_id=row["current_team_id"],
+        current_team_name=row["current_team_name"],
+        strava_url=row["strava_url"],
+    )
+
+
 def get_riders(team_id: Optional[str] = None) -> list[Rider]:
     query = """
-        SELECT r.id, r.name, r.country, r.birth_date, r.wiki_url,
-               r.current_team_id, t.name AS current_team_name
+        SELECT r.id, r.name, r.first_name, r.last_name, r.country, r.birth_date,
+               r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url
         FROM riders r
         LEFT JOIN teams t ON t.id = r.current_team_id
     """
@@ -193,29 +223,21 @@ def get_riders(team_id: Optional[str] = None) -> list[Rider]:
     if team_id:
         query += " WHERE r.current_team_id = %s"
         params = (team_id,)
-    query += " ORDER BY r.name"
+    # Standard-Sortierung nach Nachname (siehe README) - NULLS LAST betrifft
+    # nur das kurze Zeitfenster direkt nach dem Schema-Update, bevor der
+    # nächste refresh_riders-Lauf first_name/last_name für alle nachträgt.
+    query += " ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name"
     with _connect() as conn:
         rows = conn.execute(query, params).fetchall()
-    return [
-        Rider(
-            id=row["id"],
-            name=row["name"],
-            country=row["country"],
-            birth_date=row["birth_date"].isoformat() if row["birth_date"] else None,
-            wiki_url=row["wiki_url"],
-            current_team_id=row["current_team_id"],
-            current_team_name=row["current_team_name"],
-        )
-        for row in rows
-    ]
+    return [_row_to_rider(row) for row in rows]
 
 
 def get_rider(rider_id: str) -> Optional[Rider]:
     with _connect() as conn:
         row = conn.execute(
             """
-            SELECT r.id, r.name, r.country, r.birth_date, r.wiki_url,
-                   r.current_team_id, t.name AS current_team_name
+            SELECT r.id, r.name, r.first_name, r.last_name, r.country, r.birth_date,
+                   r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url
             FROM riders r
             LEFT JOIN teams t ON t.id = r.current_team_id
             WHERE r.id = %s
@@ -224,15 +246,7 @@ def get_rider(rider_id: str) -> Optional[Rider]:
         ).fetchone()
     if row is None:
         return None
-    return Rider(
-        id=row["id"],
-        name=row["name"],
-        country=row["country"],
-        birth_date=row["birth_date"].isoformat() if row["birth_date"] else None,
-        wiki_url=row["wiki_url"],
-        current_team_id=row["current_team_id"],
-        current_team_name=row["current_team_name"],
-    )
+    return _row_to_rider(row)
 
 
 def get_rider_stints(rider_id: str) -> list[RiderStint]:
@@ -256,6 +270,59 @@ def get_rider_stints(rider_id: str) -> list[RiderStint]:
         )
         for row in rows
     ]
+
+
+def get_riders_missing_strava(limit: int) -> list[dict]:
+    """Fahrer, für die noch kein Wikidata-Strava-Abgleich versucht wurde
+    (siehe scrapers/wikidata.py). Analog zu get_riders_missing_history:
+    einmaliger Check pro Fahrer statt periodischer Neuprüfung, da ein neu
+    angelegtes Strava-Profil kein Ereignis ist, auf das zeitnah reagiert
+    werden müsste (siehe README, Abschnitt "Bekannte Lücken")."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "SELECT id, wiki_url FROM riders WHERE strava_checked_at IS NULL ORDER BY name LIMIT %s",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def set_strava_url(rider_id: str, strava_url: Optional[str]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE riders SET strava_url = %s, strava_checked_at = now() WHERE id = %s",
+            (strava_url, rider_id),
+        )
+
+
+def get_rider_seasons(rider_id: str) -> list[RiderSeason]:
+    """Leitet Saison-für-Saison-Zuordnungen (Jahr -> Team) aus den
+    gespeicherten Team-Stints ab. Nur Stints bei einem aktuell bekannten
+    WorldTour-Team (team_id gesetzt, also in der teams-Tabelle vorhanden)
+    zählen als "World Tour"-Saison - die Infobox-Historie eines Fahrers
+    listet auch niedrigere Kategorien (Continental/ProConti) auf, die
+    nicht Teil der World Tour sind und hier bewusst ausgeschlossen werden.
+    Ein offener Zeitraum (end_year IS NULL, aktuelles Team) läuft bis zur
+    laufenden Saison (RACE_SEASON_YEAR)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.start_year, s.end_year, t.name AS team_name, t.wiki_url AS team_wiki_url
+            FROM rider_team_stints s
+            JOIN teams t ON t.id = s.team_id
+            WHERE s.rider_id = %s
+            ORDER BY s.start_year
+            """,
+            (rider_id,),
+        ).fetchall()
+    seasons: list[RiderSeason] = []
+    for row in rows:
+        end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
+        for year in range(row["start_year"], end_year + 1):
+            seasons.append(
+                RiderSeason(year=year, team_name=row["team_name"], team_wiki_url=row["team_wiki_url"])
+            )
+    seasons.sort(key=lambda s: s.year, reverse=True)
+    return seasons
 
 
 def get_rider_count() -> int:
@@ -294,12 +361,12 @@ def export_riders() -> list[dict]:
     with _connect() as conn:
         return conn.execute(
             """
-            SELECT r.id, r.name, r.country, r.birth_date, r.wiki_url,
-                   r.current_team_id, t.name AS current_team_name,
-                   r.history_fetched_at, r.last_updated
+            SELECT r.id, r.first_name, r.last_name, r.name, r.country, r.birth_date,
+                   r.wiki_url, r.current_team_id, t.name AS current_team_name,
+                   r.strava_url, r.history_fetched_at, r.last_updated
             FROM riders r
             LEFT JOIN teams t ON t.id = r.current_team_id
-            ORDER BY r.name
+            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
             """
         ).fetchall()
 
@@ -313,6 +380,39 @@ def export_stints() -> list[dict]:
             FROM rider_team_stints s
             JOIN riders r ON r.id = s.rider_id
             LEFT JOIN teams t ON t.id = s.team_id
-            ORDER BY r.name, s.start_year
+            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
             """
         ).fetchall()
+
+
+def export_seasons() -> list[dict]:
+    """Eine Zeile pro Fahrer und Saison (Jahr) bei einem WorldTour-Team -
+    dieselbe Ableitung wie get_rider_seasons, aber für alle Fahrer auf
+    einmal (für den CSV-Export). UCI-Ranking-Punkte fehlen bewusst, siehe
+    README, Abschnitt "Bekannte Lücken"."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.rider_id, r.name AS rider_name, s.team_id, t.name AS team_name,
+                   t.wiki_url AS team_wiki_url, s.start_year, s.end_year
+            FROM rider_team_stints s
+            JOIN riders r ON r.id = s.rider_id
+            JOIN teams t ON t.id = s.team_id
+            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
+            """
+        ).fetchall()
+    seasons: list[dict] = []
+    for row in rows:
+        end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
+        for year in range(row["start_year"], end_year + 1):
+            seasons.append(
+                {
+                    "rider_id": row["rider_id"],
+                    "rider_name": row["rider_name"],
+                    "year": year,
+                    "team_id": row["team_id"],
+                    "team_name": row["team_name"],
+                    "team_wiki_url": row["team_wiki_url"],
+                }
+            )
+    return seasons

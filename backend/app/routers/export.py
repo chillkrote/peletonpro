@@ -53,3 +53,8 @@ def export_riders_csv():
 @router.get("/stints.csv")
 def export_stints_csv():
     return _export(db.export_stints, "rider_team_stints.csv")
+
+
+@router.get("/seasons.csv")
+def export_seasons_csv():
+    return _export(db.export_seasons, "rider_seasons.csv")

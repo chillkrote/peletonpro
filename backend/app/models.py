@@ -105,13 +105,30 @@ class RiderHistory(BaseModel):
 
 class Rider(BaseModel):
     id: str
+    first_name: str
+    last_name: str
     name: str
     country: Optional[str] = None
     birth_date: Optional[str] = None
     wiki_url: str
     current_team_id: Optional[str] = None
     current_team_name: Optional[str] = None
+    strava_url: Optional[str] = None
+
+
+class RiderSeason(BaseModel):
+    """Eine Saison (Kalenderjahr), in der ein Fahrer laut Wikipedia-Team-
+    Historie bei einem aktuell bekannten WorldTour-Team war - abgeleitet aus
+    den RiderStint-Zeiträumen (siehe db.get_rider_seasons). UCI-Ranking-
+    Punkte pro Saison sind hier bewusst NICHT enthalten: es gibt dafür keine
+    zuverlässige, in großem Umfang abrufbare Quelle (siehe README, Abschnitt
+    "Bekannte Lücken")."""
+
+    year: int
+    team_name: str
+    team_wiki_url: Optional[str] = None
 
 
 class RiderDetail(Rider):
     history: list[RiderStint] = []
+    seasons: list[RiderSeason] = []
