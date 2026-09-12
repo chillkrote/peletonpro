@@ -290,6 +290,121 @@ img { max-width: 100%; }
 .team-card .country { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
 
 /* ---------------------------------------------------------------------- *
+ * Teams & Fahrer - Tab-Umschalter (teams.html)
+ * ---------------------------------------------------------------------- */
+.tab-switch {
+    display: flex; gap: 8px; max-width: 1280px; margin: 22px auto 0; padding: 0 24px;
+}
+.tab-switch button {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--card); border: 1px solid var(--border); color: var(--text-muted);
+    font-family: var(--font-body); font-weight: 700; font-size: 13.5px;
+    padding: 10px 20px; border-radius: 999px; cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.tab-switch button:hover { color: var(--text); }
+.tab-switch button.active { background: var(--secondary); color: #fff; border-color: transparent; }
+
+/* ---------------------------------------------------------------------- *
+ * Fahrer-Liste (Fahrer-Tab auf teams.html)
+ * ---------------------------------------------------------------------- */
+.riders-toolbar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    max-width: 1280px; margin: 22px auto 0; padding: 0 24px;
+}
+.search-box {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; flex: 1; min-width: 220px;
+}
+.search-box i { color: var(--text-faint); }
+.search-box input {
+    background: transparent; border: none; outline: none; color: var(--text);
+    font-family: var(--font-body); font-size: 14px; width: 100%;
+}
+.search-box input::placeholder { color: var(--text-faint); }
+#rider-team-filter {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 14px; color: var(--text); font-family: var(--font-body); font-size: 13.5px;
+    cursor: pointer;
+}
+.riders-count { color: var(--text-faint); font-size: 12.5px; white-space: nowrap; }
+
+.rider-table-wrap {
+    max-width: 1280px; margin: 16px auto 0; padding: 0 24px 60px; overflow-x: auto;
+}
+.rider-table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.rider-table th, .rider-table td { padding: 12px 18px; text-align: left; font-size: 13.5px; }
+.rider-table th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.rider-table th .sort-hint { text-transform: none; font-weight: 400; letter-spacing: 0; color: var(--text-faint); font-size: 10.5px; }
+.rider-table td { border-bottom: 1px solid var(--border); }
+.rider-table tr:last-child td { border-bottom: none; }
+.rider-table tbody tr { cursor: pointer; transition: background 0.15s; }
+.rider-table tbody tr:hover { background: var(--card-hover); }
+.rider-table .rname .last { font-weight: 700; }
+.rider-table .rname .first { color: var(--text-muted); font-size: 12.5px; }
+.rider-table .rcountry { color: var(--text-muted); white-space: nowrap; }
+.rider-table .no-strava { color: var(--text-faint); }
+
+.team-badge {
+    display: inline-block; background: rgba(59, 130, 246, 0.15); color: #93c5fd;
+    font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px;
+    text-decoration: none; white-space: nowrap;
+}
+.team-badge.muted { background: rgba(148, 163, 184, 0.12); color: var(--text-faint); }
+.strava-link { color: #fc4c02; font-size: 17px; }
+.strava-link:hover { color: #ff6a2b; }
+
+/* ---------------------------------------------------------------------- *
+ * Team-Kader (Ausschnitt auf der Team-Detailseite)
+ * ---------------------------------------------------------------------- */
+.roster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+.roster-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; text-align: center; text-decoration: none; color: inherit;
+    position: relative; transition: transform 0.15s, border-color 0.15s;
+}
+.roster-card:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+.roster-card .rc-avatar {
+    width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 10px;
+    background: var(--secondary); color: #fff; display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-head); font-weight: 800; font-size: 14px;
+}
+.roster-card .rc-name .last { font-weight: 700; font-size: 13.5px; }
+.roster-card .rc-name .first { color: var(--text-muted); font-size: 11.5px; }
+.roster-card .rc-country { color: var(--text-faint); font-size: 11px; margin-top: 6px; }
+.roster-card .strava-link { position: absolute; top: 12px; right: 12px; font-size: 14px; }
+.roster-empty { color: var(--text-muted); font-size: 14px; }
+.state-panel.small { margin: 20px 0; padding: 26px; }
+
+/* ---------------------------------------------------------------------- *
+ * Fahrer-Detailseite
+ * ---------------------------------------------------------------------- */
+.rider-avatar { font-size: 28px; }
+.rider-banner h1 { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.rider-first { font-weight: 400; color: rgba(255, 255, 255, 0.75); font-size: 0.7em; }
+.wiki-link.strava { color: #fc4c02; }
+
+.season-table-wrap { overflow-x: auto; }
+.season-table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.season-table th, .season-table td { padding: 11px 20px; text-align: left; font-size: 13.5px; }
+.season-table th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); }
+.season-table td { border-bottom: 1px solid var(--border); }
+.season-table tr:last-child td { border-bottom: none; }
+.season-table .season-year { font-family: var(--font-head); font-weight: 800; color: var(--secondary-light); width: 70px; }
+.season-table a { color: var(--text); text-decoration: none; font-weight: 600; }
+.season-table a:hover { text-decoration: underline; }
+.season-table .tbd { color: var(--text-faint); font-style: italic; font-size: 12.5px; }
+
+.stints-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.stints-list li {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 18px; font-size: 13.5px;
+}
+.stints-list .stint-years { font-family: var(--font-head); font-weight: 700; color: var(--text-muted); width: 90px; flex-shrink: 0; }
+.stints-list .stint-team a { color: var(--text); text-decoration: none; font-weight: 600; }
+.stints-list .stint-team a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------------- *
  * Team-Detailseite
  * ---------------------------------------------------------------------- */
 .team-banner {
@@ -409,4 +524,10 @@ img { max-width: 100%; }
     .gender-toggle { justify-content: center; }
     .team-banner { flex-direction: column; text-align: center; }
     .team-banner .meta { justify-content: center; }
+    .rider-banner h1 { justify-content: center; }
+    .tab-switch { justify-content: center; }
+    .riders-toolbar { flex-direction: column; align-items: stretch; }
+    .rider-table th .sort-hint { display: none; }
+    .rider-table th, .rider-table td { padding: 10px 12px; }
+    .stints-list li { flex-wrap: wrap; }
 }

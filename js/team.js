@@ -1,11 +1,10 @@
 // ===== TEAM-DETAILSEITE =====
-// Zeigt ein einzelnes Team (aus dem query-param ?id=) mit den aktuell
-// verfügbaren Daten: Name, Land, Wikipedia-Link sowie Saison-Statistiken
-// (Siege/Podestplätze/Top-10), die aus den bereits vorhandenen Renn-
-// ergebnissen berechnet werden - kein Fahrerkader, da einzelne Fahrer
-// aktuell nicht gescraped werden.
+// Zeigt ein einzelnes Team (aus dem query-param ?id=): Name, Land,
+// Wikipedia-Link, Saison-Statistiken (Siege/Podestplätze/Top-10) aus den
+// Rennergebnissen, sowie den aktuellen Kader aus der Fahrer-Datenbank
+// (js/riders.js: renderTeamRoster) mit Link auf jedes Fahrerprofil.
 document.addEventListener('DOMContentLoaded', async () => {
-    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams', href: 'teams.html' }, { label: 'Team' }] });
+    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Team' }] });
 
     const content = document.getElementById('team-content');
     if (renderComingSoonIfWomen(content)) return;
@@ -25,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
         renderTeam(content, team, racesRes.races || [], resultsRes.results || []);
+        renderTeamRoster(document.getElementById('team-roster'), teamId);
     } catch (err) {
         console.error('Fehler beim Laden des Teams:', err);
         content.innerHTML = errorPanel('Team konnte nicht geladen werden.');
@@ -65,7 +65,7 @@ function computeStats(team, results) {
 
 function renderTeam(container, team, races, results) {
     document.title = `${team.name} – PelotonPro`;
-    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams', href: 'teams.html' }, { label: team.name }] });
+    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: team.name }] });
 
     const racesById = Object.fromEntries(races.map((r) => [r.id, r]));
     const stats = computeStats(team, results);
@@ -117,6 +117,11 @@ function renderTeam(container, team, races, results) {
                           .join('')
                     : `<p style="color:var(--text-muted);font-size:14px">Noch keine Saisonsiege erfasst.</p>`
             }
+        </div>
+
+        <div class="team-wins-wrap">
+            <h2>Kader</h2>
+            <div id="team-roster"></div>
         </div>
     `;
 }

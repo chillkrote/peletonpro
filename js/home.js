@@ -12,13 +12,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-        const [teamsRes, racesRes, newsRes] = await Promise.all([
+        const [teamsRes, racesRes, newsRes, ridersRes] = await Promise.all([
             Api.getTeams(),
             Api.getRaces(),
             Api.getNews(1),
+            Api.getRiders().catch(() => null), // Fahrer-DB kann fehlen (kein DATABASE_URL) - Kachel bleibt dann bei Teams-Zahl
         ]);
+        const teamCount = (teamsRes.teams || []).length;
+        const riderCount = ridersRes && !ridersRes.error ? (ridersRes.riders || []).length : null;
         setBadge('tile-races-count', `${(racesRes.races || []).length} Rennen`);
-        setBadge('tile-teams-count', `${(teamsRes.teams || []).length} Teams`);
+        setBadge('tile-teams-count', riderCount !== null ? `${teamCount} Teams · ${riderCount} Fahrer` : `${teamCount} Teams`);
         setBadge('tile-news-count', newsRes.last_updated ? 'aktuell' : '–');
     } catch (err) {
         console.error('Fehler beim Laden der Kachel-Kennzahlen:', err);
