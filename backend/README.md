@@ -441,6 +441,103 @@ API läuft dann unter `http://localhost:8001`, z.B.
    nutzen oder den Service während des Backfills regelmäßig anpingen
    (z.B. `curl .../api/health` per Cron).
 
+## Backup (`app/backup.py`)
+
+**Warum das nötig ist:** Die Produktionsdatenbank läuft auf Renders
+kostenlosem Postgres-Plan. Der läuft **30 Tage nach Anlage ersatzlos ab**
+(`expiresAt`, für die aktuelle Instanz `dpg-daia01m743jc73eaocb0-a` der
+2026-10-12) und hat keine Backups. Damit wäre der komplette Bestand weg -
+Teams, ~517 Fahrer mit Team-Historie, mehrere tausend Rennen mit Ergebnissen
+und Etappen - und der Wiederaufbau per Scraper dauert (respektvoll
+ratenlimitiert, siehe "Scraping-Ethik") Tage.
+
+> **Das Backup-Skript ist die Absicherung, nicht die Lösung.** Ein Free-Plan
+> lässt sich nach Ablauf nicht mehr upgraden - die Instanz ist dann weg. Der
+> eigentliche Fix ist ein bezahlter Plan: Dashboard → `peletonpro-db` →
+> Settings → Plan. Erst damit gibt es auch Point-in-Time-Recovery; das hier
+> ersetzt kein Managed Backup.
+
+### Zwei Verfahren, automatisch gewählt
+
+| | `pgdump` | `csv` |
+|---|---|---|
+| Werkzeug | `pg_dump -Fc` / `pg_restore` | nur `psycopg` (`COPY`) + gzip |
+| Sichert | Schema **und** Daten und Sequenzen | nur **Daten** |
+| Restore-Ziel | auch eine völlig leere Datenbank | Datenbank mit bereits angelegtem Schema |
+| Voraussetzung | `postgresql-client`, Version ≥ Server | keine (psycopg ist ohnehin Abhängigkeit) |
+
+`choose_method()` nimmt `pgdump`, wenn die Binaries vorhanden **und nicht
+älter als der Server** sind (`pg_dump` verweigert neuere Server - eine
+vorhandene, aber zu alte Installation ist schlimmer als keine, weil sie
+stillschweigend scheitern würde), sonst `csv`.
+
+**Auf Renders Python-Image ist `pg_dump` nicht enthalten**, dort greift also
+der CSV-Weg. Das ist kein Nachteil für den Zweck: das Schema entsteht beim
+Start ohnehin aus `app/db.py` / `app/db_races.py` (`init_schema`) und ist im
+Repository versioniert - gesichert werden müssen die Daten. Wer einen
+vollständigen, schema-inklusiven Dump will, ruft das Skript lokal gegen die
+**External Database URL** auf; dort ist `pg_dump` meist vorhanden.
+
+### Aufrufe
+
+```bash
+cd backend
+export DATABASE_URL=postgresql://...        # Render: Internal oder External URL
+
+python -m app.backup dump                   # nach BACKUP_DIR (Default: backend/backups)
+python -m app.backup dump --keep 7          # nur die letzten 7 Läufe behalten
+python -m app.backup dump --method csv      # Verfahren erzwingen
+python -m app.backup verify <pfad>          # Manifest gegen die DB prüfen
+python -m app.backup restore <pfad> --force # zurückschreiben (überschreibt ALLES)
+```
+
+Jeder Lauf legt ein eigenes Verzeichnis `backups/peletonpro-<UTC-Zeitstempel>/`
+an, darin `manifest.json` plus `dump.pgcustom` bzw. eine `<tabelle>.csv.gz`
+pro Tabelle. Das Manifest hält Verfahren, Server-Version, Tabellen-Reihenfolge,
+Zeilenzahlen und Sequenz-Stände fest - und **bewusst keine Verbindungsdaten**.
+
+`restore` verweigert ohne `--force` den Dienst und prüft anschließend selbst
+die Zeilenzahlen gegen das Manifest; bei Abweichung Exit-Code ≠ 0. `verify`
+liefert 0 bei Übereinstimmung, 1 bei Abweichung - beides für einen Cron Job
+auswertbar.
+
+### Zwei Details, die ein CSV-Backup sonst still kaputt machen
+
+1. **Sequenzen.** Werden Zeilen mit expliziten IDs zurückgeschrieben, bleibt
+   `race_results_id_seq` auf 1 stehen und das nächste `INSERT` kollidiert.
+   `_reset_sequences()` setzt jede Sequenz per `setval` auf `max(spalte)` der
+   zugehörigen Tabelle - aus den **Daten** abgeleitet, nicht aus dem Manifest,
+   damit es auch bei einem von Hand beschnittenen Dump stimmt.
+2. **Tabellen-Reihenfolge.** Wird nicht hart codiert, sondern bei jedem Lauf
+   aus den Fremdschlüsseln topologisch sortiert (`_table_order`). Neue
+   Tabellen - etwa für Frauen-Radsport oder weitere Kategorien - werden damit
+   automatisch mitgesichert und in korrekter Reihenfolge eingefügt, ohne dass
+   hier etwas anzupassen ist.
+
+### Als Render Cron Job einrichten
+
+Dashboard → New → Cron Job, gleiches Repo:
+
+| Feld | Wert |
+|---|---|
+| Runtime | Python 3 |
+| Build Command | `cd backend && pip install -r requirements.txt` |
+| Command | `cd backend && python -m app.backup dump --keep 7` |
+| Schedule | `0 3 * * *` (täglich 03:00 UTC) |
+| Env: `DATABASE_URL` | aus `peletonpro-db` (Internal Database URL) |
+| Env: `BACKUP_DIR` | `/var/data/backups` bei angehängtem Disk, sonst Default |
+
+**Wichtig:** Ein Cron Job ohne persistentes Disk verliert die Dateien beim
+Ende des Laufs - der Dump muss dann im selben Command weitergeschoben werden
+(S3/B2/Storage-Box). Dieses Modul schreibt absichtlich nur ins Dateisystem und
+bringt keine Cloud-Zugangsdaten mit; wohin die Dateien danach wandern,
+entscheidet der Cron-Command. Beispiel mit `rclone`:
+
+```bash
+cd backend && python -m app.backup dump --keep 2 && \
+  rclone copy backups remote:peletonpro-backups
+```
+
 ## API-Endpunkte
 
 | Endpunkt | Beschreibung |
