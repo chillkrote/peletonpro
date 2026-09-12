@@ -1,0 +1,37 @@
+<svg viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg" role="presentation" aria-hidden="true">
+    <!-- Sehr reduzierte Szene (Hügel, Straße, eine Gruppe Fahrer, Bewegungslinien) -
+         wird im CSS stark geblurrt und auf niedrige Deckkraft gesetzt eingesetzt,
+         Detailgrad ist daher bewusst niedrig gehalten. -->
+    <defs>
+        <g id="cyclist" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="40" cy="104" r="26" stroke-width="8"/>
+            <circle cx="160" cy="104" r="26" stroke-width="8"/>
+            <path d="M40,104 L100,104 L150,55 M100,104 L88,58 L40,104" stroke-width="9"/>
+            <path d="M88,58 C74,40 66,26 60,15" stroke-width="14"/>
+            <path d="M70,27 L150,55" stroke-width="10"/>
+            <path d="M88,58 L70,100" stroke-width="11"/>
+            <circle cx="57" cy="10" r="13" fill="currentColor" stroke="none"/>
+        </g>
+    </defs>
+
+    <path d="M0,320 C280,250 520,360 820,280 C1080,220 1340,310 1600,260 L1600,0 L0,0 Z" fill="#7f8b99" opacity="0.14"/>
+
+    <path d="M0,660 L1600,585 L1600,780 L0,850 Z" fill="#3a4655" opacity="0.16"/>
+
+    <g stroke="#3a4655" stroke-linecap="round" opacity="0.30">
+        <line x1="120" y1="430" x2="360" y2="418" stroke-width="9"/>
+        <line x1="90" y1="480" x2="300" y2="470" stroke-width="7"/>
+        <line x1="150" y1="530" x2="420" y2="516" stroke-width="10"/>
+        <line x1="110" y1="580" x2="330" y2="568" stroke-width="6"/>
+    </g>
+
+    <g transform="rotate(-4 800 480)">
+        <use href="#cyclist" transform="translate(500,380) scale(1.05)" color="#33404f"/>
+        <use href="#cyclist" transform="translate(640,430) scale(0.92)" color="#b8592f"/>
+        <use href="#cyclist" transform="translate(760,360) scale(1.15)" color="#33404f"/>
+        <use href="#cyclist" transform="translate(890,440) scale(1.0)" color="#33404f"/>
+        <use href="#cyclist" transform="translate(1000,375) scale(1.1)" color="#3d6789"/>
+        <use href="#cyclist" transform="translate(1120,430) scale(0.9)" color="#33404f"/>
+        <use href="#cyclist" transform="translate(1230,370) scale(1.05)" color="#33404f"/>
+    </g>
+</svg>

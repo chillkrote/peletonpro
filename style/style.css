@@ -2,27 +2,33 @@
    PelotonPro - Redesign 2026
    Startseite (3 Kacheln) + eigenständige Races/Teams/News-Seiten mit
    Männer/Frauen-Umschalter. Ersetzt das frühere Single-Page-Magazin-Layout.
+
+   Farbschema: helles, dezentes Theme (siehe .tile/.home-bg weiter unten) -
+   Karten heben sich nur sanft vom Seitenhintergrund ab, kräftige Akzentfarben
+   sind Hover-/aktiv-Zuständen vorbehalten statt permanent knallig zu sein.
    ========================================================================== */
 
 :root {
-    --primary: #0f172a;
-    --card: #18233a;
-    --card-hover: #1d2c48;
-    --border: rgba(255, 255, 255, 0.08);
-    --border-strong: rgba(255, 255, 255, 0.16);
-    --secondary: #ff6b35;
-    --secondary-light: #ff8c5a;
-    --secondary-dark: #e55a2b;
-    --accent: #3b82f6;
-    --live: #ef4444;
-    --text: #f1f5f9;
-    --text-muted: #94a3b8;
-    --text-faint: #64748b;
+    --primary: #eef1f4;
+    --card: #ffffff;
+    --card-hover: #f6f8fa;
+    --border: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.16);
+    --secondary: #b8592f;
+    --secondary-light: #e0916a;
+    --secondary-dark: #8a3f22;
+    --accent: #3d6789;
+    --accent-light: #7fa3bf;
+    --accent-dark: #274a63;
+    --live: #b8433c;
+    --text: #1f2733;
+    --text-muted: #5b6472;
+    --text-faint: #8a93a1;
 
     --font-head: 'Roboto Condensed', Arial, Helvetica, sans-serif;
     --font-body: 'Open Sans', 'Segoe UI', Arial, Helvetica, sans-serif;
 
-    --shadow-lg: 0 15px 30px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 15px 30px rgba(15, 23, 42, 0.08);
     --radius: 14px;
 }
 
@@ -38,10 +44,26 @@ body {
     display: flex;
     flex-direction: column;
 }
-main { flex: 1; }
+main { flex: 1; position: relative; }
 a { color: inherit; }
 .container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
 img { max-width: 100%; }
+
+/* Sehr dezentes Hintergrundbild eines Fahrradrennens auf der Startseite -
+   stark geblurrt/aufgehellt, damit es nicht vom Inhalt ablenkt (siehe
+   style/img/peloton-bg.svg). */
+.home-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-image: url('img/peloton-bg.svg');
+    background-size: cover;
+    background-position: center 40%;
+    background-repeat: no-repeat;
+    filter: blur(38px) saturate(0.9);
+    opacity: 0.3;
+    pointer-events: none;
+}
 
 /* ---------------------------------------------------------------------- *
  * Top-Navigation (js/nav.js rendert dies in jede Seite über #site-nav)
@@ -77,6 +99,7 @@ img { max-width: 100%; }
     justify-content: center;
     font-size: 16px;
     font-weight: 900;
+    color: #fff;
     flex-shrink: 0;
 }
 .crumbs { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 14px; }
@@ -131,6 +154,12 @@ img { max-width: 100%; }
     max-width: 1180px;
     margin: 0 auto;
 }
+
+/* Kacheln: im Ruhezustand nur eine dezente weiße Karte (hebt sich sanft vom
+   Seitenhintergrund ab) mit einem leicht eingefärbten Icon-Kreis je Kategorie.
+   Erst beim Hover blendet ein Farbverlauf (::before, per Opacity animiert -
+   Farbverläufe selbst lassen sich nicht sauber transitionieren) über die
+   ganze Kachel ein und Text/Icon wechseln auf Weiß. */
 .tile {
     position: relative;
     border-radius: 20px;
@@ -140,40 +169,64 @@ img { max-width: 100%; }
     flex-direction: column;
     justify-content: flex-end;
     overflow: hidden;
+    background: var(--card);
     border: 1px solid var(--border);
     box-shadow: var(--shadow-lg);
     text-decoration: none;
     color: inherit;
-    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
-.tile:hover { transform: translateY(-4px); box-shadow: 0 22px 40px rgba(0, 0, 0, 0.45); }
+.tile::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+.tile:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 22px 38px rgba(15, 23, 42, 0.14);
+    border-color: transparent;
+}
+.tile:hover::before { opacity: 1; }
+.tile > * { position: relative; z-index: 1; }
 .tile .icon-wrap {
     position: absolute;
     top: 30px; left: 28px;
     width: 54px; height: 54px;
     border-radius: 15px;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--tile-tint);
+    transition: background 0.25s ease;
 }
-.tile .icon-wrap i { font-size: 24px; color: #fff; }
+.tile .icon-wrap i { font-size: 24px; color: var(--tile-accent); transition: color 0.25s ease; }
+.tile:hover .icon-wrap { background: rgba(255, 255, 255, 0.2); }
+.tile:hover .icon-wrap i { color: #fff; }
 .tile .bignum {
     position: absolute;
     top: 32px; right: 28px;
     font-family: var(--font-head);
     font-size: 13.5px;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.85);
-    background: rgba(0, 0, 0, 0.22);
+    color: var(--tile-accent);
+    background: var(--tile-tint);
     padding: 5px 13px;
     border-radius: 999px;
+    transition: background 0.25s ease, color 0.25s ease;
 }
-.tile h2 { font-family: var(--font-head); font-size: 27px; margin: 0 0 6px; color: #fff; letter-spacing: 0.3px; }
-.tile p { margin: 0 0 16px; color: rgba(255, 255, 255, 0.85); font-size: 14.5px; }
-.tile .go { display: inline-flex; align-items: center; gap: 7px; color: #fff; font-weight: 700; font-size: 13.5px; }
-.tile-races { background: linear-gradient(150deg, #ff6b35 0%, #c73f16 100%); }
-.tile-teams { background: linear-gradient(150deg, #3b82f6 0%, #1748a8 100%); }
-.tile-news { background: linear-gradient(150deg, #1a2338 0%, #0a0f1c 100%); }
-.tile-news .icon-wrap { background: rgba(255, 255, 255, 0.08); }
+.tile:hover .bignum { background: rgba(0, 0, 0, 0.22); color: rgba(255, 255, 255, 0.9); }
+.tile h2 { font-family: var(--font-head); font-size: 27px; margin: 0 0 6px; color: var(--text); letter-spacing: 0.3px; transition: color 0.25s ease; }
+.tile p { margin: 0 0 16px; color: var(--text-muted); font-size: 14.5px; transition: color 0.25s ease; }
+.tile .go { display: inline-flex; align-items: center; gap: 7px; color: var(--tile-accent); font-weight: 700; font-size: 13.5px; transition: color 0.25s ease; }
+.tile:hover h2, .tile:hover p, .tile:hover .go { color: #fff; }
+.tile:hover p { color: rgba(255, 255, 255, 0.88); }
+
+.tile-races { --tile-accent: var(--secondary-dark); --tile-tint: rgba(184, 89, 47, 0.12); }
+.tile-races::before { background: linear-gradient(150deg, var(--secondary) 0%, var(--secondary-dark) 100%); }
+.tile-teams { --tile-accent: var(--accent-dark); --tile-tint: rgba(61, 103, 137, 0.12); }
+.tile-teams::before { background: linear-gradient(150deg, var(--accent) 0%, var(--accent-dark) 100%); }
+.tile-news { --tile-accent: #4a5568; --tile-tint: rgba(15, 23, 42, 0.06); }
+.tile-news::before { background: linear-gradient(150deg, #3a4455 0%, #1f2530 100%); }
 
 /* ---------------------------------------------------------------------- *
  * Seiten-Kopf (Races/Teams/News)
@@ -196,8 +249,8 @@ img { max-width: 100%; }
 .race-list { max-width: 1280px; margin: 0 auto; padding: 0 24px 60px; display: flex; flex-direction: column; gap: 10px; }
 
 .live-card {
-    background: linear-gradient(120deg, #2b1018, #1a2338 60%);
-    border: 1px solid rgba(255, 107, 53, 0.4);
+    background: linear-gradient(120deg, rgba(184, 67, 60, 0.08), var(--card) 60%);
+    border: 1px solid rgba(184, 67, 60, 0.3);
     border-radius: var(--radius);
     padding: 18px 24px;
     display: flex;
@@ -205,7 +258,7 @@ img { max-width: 100%; }
     gap: 18px;
     flex-wrap: wrap;
 }
-.live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.25); flex-shrink: 0; animation: pulse 1.6s infinite; }
+.live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 4px rgba(184, 67, 60, 0.22); flex-shrink: 0; animation: pulse 1.6s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 .live-badge { background: var(--live); color: #fff; font-size: 10.5px; font-weight: 800; padding: 3px 10px; border-radius: 999px; letter-spacing: 0.5px; }
 .live-card .rname { font-family: var(--font-head); font-size: 18px; font-weight: 700; margin-top: 6px; }
@@ -224,7 +277,7 @@ img { max-width: 100%; }
     transition: background 0.15s;
 }
 .race-row:hover { background: var(--card-hover); }
-.race-row.is-live { border-color: rgba(239, 68, 68, 0.5); }
+.race-row.is-live { border-color: rgba(184, 67, 60, 0.45); }
 .race-row .date { width: 58px; text-align: center; flex-shrink: 0; font-family: var(--font-head); }
 .race-row .date .d { font-size: 21px; font-weight: 800; line-height: 1; }
 .race-row .date .m { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -235,10 +288,10 @@ img { max-width: 100%; }
 .race-row .country { color: var(--text-faint); font-size: 12.5px; }
 
 .badge { font-size: 9.5px; font-weight: 800; padding: 2px 8px; border-radius: 5px; letter-spacing: 0.4px; text-transform: uppercase; white-space: nowrap; }
-.badge-gt { background: rgba(255, 107, 53, 0.18); color: var(--secondary-light); }
-.badge-monument { background: rgba(59, 130, 246, 0.18); color: #93c5fd; }
-.badge-stage_race, .badge-one_day { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
-.badge-live { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.badge-gt { background: rgba(184, 89, 47, 0.14); color: var(--secondary); }
+.badge-monument { background: rgba(61, 103, 137, 0.14); color: var(--accent); }
+.badge-stage_race, .badge-one_day { background: rgba(91, 100, 114, 0.1); color: var(--text-muted); }
+.badge-live { background: rgba(184, 67, 60, 0.15); color: var(--live); }
 
 .result-preview { display: flex; align-items: center; gap: 10px; flex-shrink: 0; width: 260px; }
 .result-preview .flag-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 800; color: #fff; flex-shrink: 0; }
@@ -256,14 +309,14 @@ img { max-width: 100%; }
 .race-results-panel th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); }
 .race-results-panel td { border-bottom: 1px solid var(--border); }
 .race-results-panel tr:last-child td { border-bottom: none; }
-.race-results-panel .pos { width: 36px; font-weight: 800; color: var(--secondary-light); }
+.race-results-panel .pos { width: 36px; font-weight: 800; color: var(--secondary); }
 .race-results-panel .team-name { color: var(--text-muted); }
 
 .race-panel-links {
     background: var(--card); border: 1px solid var(--border); border-top: none;
     padding: 10px 20px; display: flex; align-items: center; gap: 10px; font-size: 12.5px;
 }
-.race-panel-links a { color: var(--secondary-light); text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.race-panel-links a { color: var(--secondary); text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .race-panel-links a:hover { text-decoration: underline; }
 .race-panel-links .sep { color: var(--text-faint); }
 .race-panel-empty {
@@ -279,11 +332,11 @@ img { max-width: 100%; }
 }
 .stage-row { display: flex; align-items: center; gap: 16px; padding: 9px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .stage-row:last-child { border-bottom: none; }
-.stage-row .stage-num { width: 26px; flex-shrink: 0; font-weight: 800; color: var(--secondary-light); font-family: var(--font-head); }
+.stage-row .stage-num { width: 26px; flex-shrink: 0; font-weight: 800; color: var(--secondary); font-family: var(--font-head); }
 .stage-row .stage-meta { flex: 1; color: var(--text-muted); min-width: 0; }
 .stage-row .stage-winner { flex-shrink: 0; font-weight: 600; white-space: nowrap; }
 .stage-row .stage-winner.muted { color: var(--text-faint); font-weight: 400; font-style: italic; }
-.stage-row .stage-winner i { color: var(--secondary-light); margin-right: 4px; }
+.stage-row .stage-winner i { color: var(--secondary); margin-right: 4px; }
 
 /* ---------------------------------------------------------------------- *
  * Teams
@@ -308,7 +361,7 @@ img { max-width: 100%; }
     display: flex; align-items: center; justify-content: center;
     font-family: var(--font-head); font-weight: 800; font-size: 17px; color: #fff;
     background: var(--secondary);
-    border: 3px solid rgba(255, 255, 255, 0.12);
+    border: 3px solid var(--border);
     overflow: hidden;
 }
 .logo-circle img { width: 100%; height: 100%; object-fit: cover; }
@@ -372,11 +425,11 @@ img { max-width: 100%; }
 .rider-table .no-strava { color: var(--text-faint); }
 
 .team-badge {
-    display: inline-block; background: rgba(59, 130, 246, 0.15); color: #93c5fd;
+    display: inline-block; background: rgba(61, 103, 137, 0.12); color: var(--accent);
     font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px;
     text-decoration: none; white-space: nowrap;
 }
-.team-badge.muted { background: rgba(148, 163, 184, 0.12); color: var(--text-faint); }
+.team-badge.muted { background: rgba(91, 100, 114, 0.1); color: var(--text-faint); }
 .strava-link { color: #fc4c02; font-size: 17px; }
 .strava-link:hover { color: #ff6a2b; }
 
@@ -407,7 +460,7 @@ img { max-width: 100%; }
  * ---------------------------------------------------------------------- */
 .rider-avatar { font-size: 28px; }
 .rider-banner h1 { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-.rider-first { font-weight: 400; color: rgba(255, 255, 255, 0.75); font-size: 0.7em; }
+.rider-first { font-weight: 400; color: var(--text-muted); font-size: 0.7em; }
 .wiki-link.strava { color: #fc4c02; }
 
 .season-table-wrap { overflow-x: auto; }
@@ -416,7 +469,7 @@ img { max-width: 100%; }
 .season-table th { color: var(--text-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); }
 .season-table td { border-bottom: 1px solid var(--border); }
 .season-table tr:last-child td { border-bottom: none; }
-.season-table .season-year { font-family: var(--font-head); font-weight: 800; color: var(--secondary-light); width: 70px; }
+.season-table .season-year { font-family: var(--font-head); font-weight: 800; color: var(--secondary); width: 70px; }
 .season-table a { color: var(--text); text-decoration: none; font-weight: 600; }
 .season-table a:hover { text-decoration: underline; }
 .season-table .tbd { color: var(--text-faint); font-style: italic; font-size: 12.5px; }
@@ -434,7 +487,7 @@ img { max-width: 100%; }
  * Team-Detailseite
  * ---------------------------------------------------------------------- */
 .team-banner {
-    background: linear-gradient(120deg, rgba(255, 107, 53, 0.22), var(--primary) 65%);
+    background: linear-gradient(120deg, rgba(184, 89, 47, 0.12), var(--primary) 65%);
     padding: 42px 24px 34px;
     display: flex;
     align-items: center;
@@ -445,7 +498,8 @@ img { max-width: 100%; }
 .team-banner .logo-circle-lg {
     width: 88px; height: 88px; border-radius: 50%;
     background: var(--secondary);
-    border: 4px solid rgba(255, 255, 255, 0.16);
+    border: 4px solid var(--card);
+    box-shadow: 0 0 0 1px var(--border);
     display: flex; align-items: center; justify-content: center;
     font-family: var(--font-head); font-weight: 800; font-size: 24px; color: #fff;
     flex-shrink: 0;
@@ -453,13 +507,13 @@ img { max-width: 100%; }
 }
 .team-banner .logo-circle-lg img { width: 100%; height: 100%; object-fit: cover; }
 .team-banner h1 { font-family: var(--font-head); font-size: 29px; margin: 0 0 8px; }
-.team-banner .meta { display: flex; align-items: center; gap: 10px; color: rgba(255, 255, 255, 0.85); font-size: 13.5px; flex-wrap: wrap; }
-.team-banner .meta .sep { opacity: 0.4; }
-.team-banner .wiki-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--secondary-light); text-decoration: none; }
+.team-banner .meta { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 13.5px; flex-wrap: wrap; }
+.team-banner .meta .sep { opacity: 0.5; }
+.team-banner .wiki-link { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--secondary); text-decoration: none; }
 
 .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 1280px; margin: 0 auto; padding: 26px 24px 0; }
 .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
-.stat-card .val { font-family: var(--font-head); font-size: 26px; font-weight: 800; color: var(--secondary-light); }
+.stat-card .val { font-family: var(--font-head); font-size: 26px; font-weight: 800; color: var(--secondary); }
 .stat-card .lbl { font-size: 12px; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
 
 .team-wins-wrap { max-width: 1280px; margin: 0 auto; padding: 34px 24px 60px; }
@@ -469,7 +523,7 @@ img { max-width: 100%; }
     padding: 13px 18px; display: flex; align-items: center; gap: 16px; margin-bottom: 10px;
     text-decoration: none; color: inherit;
 }
-.win-row .trophy { color: var(--secondary-light); font-size: 17px; flex-shrink: 0; }
+.win-row .trophy { color: var(--secondary); font-size: 17px; flex-shrink: 0; }
 .win-row .wr-name { font-weight: 700; font-size: 14px; }
 .win-row .wr-meta { font-size: 12px; color: var(--text-faint); }
 
@@ -484,10 +538,10 @@ img { max-width: 100%; }
     overflow: hidden; display: grid; grid-template-columns: 1.1fr 1fr;
     text-decoration: none; color: inherit;
 }
-.featured-news .img { background: linear-gradient(135deg, var(--secondary), #7a2d0d); min-height: 220px; display: flex; align-items: flex-end; padding: 18px; }
-.featured-news .tag { background: rgba(0, 0, 0, 0.35); color: #fff; font-size: 10.5px; font-weight: 800; padding: 5px 12px; border-radius: 999px; letter-spacing: 0.4px; text-transform: uppercase; }
+.featured-news .img { background: linear-gradient(135deg, var(--secondary), var(--secondary-dark)); min-height: 220px; display: flex; align-items: flex-end; padding: 18px; }
+.featured-news .tag { background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 10.5px; font-weight: 800; padding: 5px 12px; border-radius: 999px; letter-spacing: 0.4px; text-transform: uppercase; }
 .featured-news .body { padding: 26px 30px; display: flex; flex-direction: column; justify-content: center; }
-.featured-news .source { color: var(--secondary-light); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.featured-news .source { color: var(--secondary); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
 .featured-news h2 { font-family: var(--font-head); font-size: 21px; line-height: 1.3; margin: 0 0 10px; }
 .featured-news .excerpt { color: var(--text-muted); font-size: 13.5px; line-height: 1.6; margin: 0 0 12px; }
 .featured-news .time { color: var(--text-faint); font-size: 12px; }
@@ -502,8 +556,8 @@ img { max-width: 100%; }
     overflow: hidden; display: flex; flex-direction: column;
     text-decoration: none; color: inherit;
 }
-.news-card .thumb { height: 110px; background: linear-gradient(135deg, #1e293b, #0a0f1c); position: relative; }
-.news-card .thumb .source-pill { position: absolute; bottom: 10px; left: 10px; background: rgba(0, 0, 0, 0.5); color: #fff; font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
+.news-card .thumb { height: 110px; background: linear-gradient(135deg, #4a5568, #2a323d); position: relative; }
+.news-card .thumb .source-pill { position: absolute; bottom: 10px; left: 10px; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 10px; font-weight: 700; padding: 4px 9px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
 .news-card .cbody { padding: 14px 16px 16px; flex: 1; display: flex; flex-direction: column; }
 .news-card h3 { font-family: var(--font-head); font-size: 14.5px; line-height: 1.35; margin: 0 0 8px; flex: 1; font-weight: 700; }
 .news-card .time { color: var(--text-faint); font-size: 11.5px; }
@@ -519,7 +573,7 @@ img { max-width: 100%; }
 .state-panel i { font-size: 30px; color: var(--text-faint); margin-bottom: 14px; display: block; }
 .state-panel h3 { font-family: var(--font-head); font-size: 19px; margin: 0 0 8px; }
 .state-panel p { color: var(--text-muted); font-size: 14px; margin: 0; }
-.state-panel.coming-soon i { color: var(--secondary-light); }
+.state-panel.coming-soon i { color: var(--secondary); }
 
 /* ---------------------------------------------------------------------- *
  * Footer
