@@ -228,11 +228,11 @@ wäre.
   ein nachträglich angelegtes Strava-Profil wird also nicht automatisch
   nachgetragen.
 
-### Bekannte Lücke: UCI-Ranking-Punkte pro Saison nicht verfügbar
+### Bekannte Lücke: UCI-Ranking-Punkte pro Saison (Platzhalter, Stand 2026-09-12)
 
-Explizit angefragt, aber **nicht implementiert**: UCI-Ranking-Punkte pro
-Fahrer und Saison. Recherche (Stand 2026-09-12) ergab keine zuverlässige,
-in großem Umfang abrufbare Quelle dafür:
+UCI-Ranking-Punkte pro Fahrer und Saison lassen sich **nicht automatisiert
+scrapen** - Recherche ergab keine zuverlässige, in großem Umfang
+abrufbare Quelle dafür:
 
 - Wikipedia-Fahrerartikel (Infobox `Template:Infobox cyclist`) haben kein
   Feld für UCI-Punkte pro Saison - nur Team-Saison-Seiten
@@ -244,12 +244,23 @@ in großem Umfang abrufbare Quelle dafür:
 - uci.org selbst ist eine clientseitig gerenderte SPA ohne per HTTP
   scrapbare Rankings (siehe oben, "uci.org als Alternative geprüft").
 
-Ohne eine erreichbare, strukturierte Quelle wäre eine Umsetzung nur über
-manuelle Dateneingabe oder eine kostenpflichtige UCI-API möglich - beides
-außerhalb des Rahmens der automatisierten Scraping-Pipeline dieses
-Projekts. Falls sich das ändert (z.B. neue offizielle UCI-API), sind die
-DB-Strukturen (`rider_team_stints`, abgeleitete `seasons`) bereits so
-angelegt, dass ein `uci_points`-Feld pro Saison ergänzt werden könnte.
+Da die Werte später aus einer anderen Datenbank nachgetragen werden
+sollen, legt `db.ensure_season_point_placeholders()` (läuft in jedem
+`refresh_riders`-Zyklus) für **jede** WorldTour-Saison eines Fahrers eine
+feste Platzhalter-Zeile in der neuen Tabelle `rider_season_points`
+(`rider_id`, `year`, `uci_points` - `uci_points` initial `NULL`) an,
+per SQL aus den vorhandenen `rider_team_stints` abgeleitet
+(`generate_series` über `start_year`..`COALESCE(end_year, RACE_SEASON_YEAR)`,
+nur für Stints mit bekanntem `team_id`). So hat ein künftiger Import ein
+verlässliches `(rider_id, year)`-Ziel für ein `UPDATE ... SET uci_points = ...`,
+ohne selbst ermitteln zu müssen, welche Kombinationen überhaupt existieren.
+Bereits importierte Werte werden nie überschrieben (`ON CONFLICT DO
+NOTHING` beim Anlegen der Platzhalter), und mit fortschreitender Saison
+(`RACE_SEASON_YEAR` steigt) legt derselbe Job automatisch neue
+Platzhalter für laufende Team-Zugehörigkeiten an. `uci_points` erscheint
+sowohl in `GET /api/riders/{id}` (`seasons[].uci_points`) als auch in
+`GET /api/export/seasons.csv` - aktuell überall `null`/leer, bis der
+externe Import läuft.
 
 **Render-Postgres-Free-Tier-Hinweis:** die kostenlose Datenbank läuft nach
 30 Tagen ab (`expiresAt` bei Erstellung) und wird dann von Render gelöscht,

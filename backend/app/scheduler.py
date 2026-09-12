@@ -158,6 +158,13 @@ def refresh_riders() -> None:
             remaining,
         )
 
+    try:
+        new_placeholders = db.ensure_season_point_placeholders()
+        if new_placeholders:
+            logger.info("UCI-Punkte-Platzhalter angelegt: %d neue Saison-Einträge", new_placeholders)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("UCI-Punkte-Platzhalter-Anlage fehlgeschlagen: %s", exc)
+
     pending_strava = db.get_riders_missing_strava(limit=STRAVA_BATCH_SIZE)
     if pending_strava:
         titles = [wiki_title_from_url(r["wiki_url"]) for r in pending_strava]

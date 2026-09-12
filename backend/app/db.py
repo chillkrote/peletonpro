@@ -71,6 +71,19 @@ ALTER TABLE riders ADD COLUMN IF NOT EXISTS last_name TEXT;
 ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_url TEXT;
 ALTER TABLE riders ADD COLUMN IF NOT EXISTS strava_checked_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_riders_last_name ON riders (last_name, first_name);
+
+-- Platzhalter für UCI-Ranking-Punkte pro Fahrer und Saison: aktuell noch
+-- keine erreichbare Quelle zum automatischen Befüllen (siehe README,
+-- Abschnitt "Bekannte Lücke"), aber eine feste Zeile pro (rider_id, year)
+-- gibt einem künftigen Import aus einer anderen UCI-Punkte-Datenbank ein
+-- verlässliches Ziel für ein UPDATE, ohne raten zu müssen, welche
+-- Kombinationen es gibt. Siehe ensure_season_point_placeholders().
+CREATE TABLE IF NOT EXISTS rider_season_points (
+    rider_id TEXT NOT NULL REFERENCES riders(id) ON DELETE CASCADE,
+    year INTEGER NOT NULL,
+    uci_points INTEGER,
+    PRIMARY KEY (rider_id, year)
+);
 """
 
 
@@ -294,15 +307,42 @@ def set_strava_url(rider_id: str, strava_url: Optional[str]) -> None:
         )
 
 
+def ensure_season_point_placeholders() -> int:
+    """Legt für jede WorldTour-Saison aus rider_team_stints eine leere
+    Platzhalter-Zeile in rider_season_points an (uci_points bleibt NULL),
+    falls noch keine existiert - damit hat jeder Fahrer/jede Saison einen
+    festen Datensatz, den ein künftiger Import aus einer anderen
+    UCI-Punkte-Datenbank per UPDATE befüllen kann, ohne selbst ermitteln
+    zu müssen, welche (rider_id, year)-Kombinationen es gibt. Bereits
+    befüllte Zeilen werden nie überschrieben (ON CONFLICT DO NOTHING); ein
+    offener Zeitraum (end_year IS NULL) läuft bis RACE_SEASON_YEAR, legt
+    also mit fortschreitender Saison automatisch neue Platzhalter an, wenn
+    dieser Job erneut läuft. Gibt die Zahl neu angelegter Zeilen zurück."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO rider_season_points (rider_id, year)
+            SELECT s.rider_id, gs.year
+            FROM rider_team_stints s
+            CROSS JOIN LATERAL generate_series(s.start_year, COALESCE(s.end_year, %s)) AS gs(year)
+            WHERE s.team_id IS NOT NULL
+            ON CONFLICT (rider_id, year) DO NOTHING
+            """,
+            (RACE_SEASON_YEAR,),
+        )
+        return cur.rowcount
+
+
 def get_rider_seasons(rider_id: str) -> list[RiderSeason]:
     """Leitet Saison-für-Saison-Zuordnungen (Jahr -> Team) aus den
-    gespeicherten Team-Stints ab. Nur Stints bei einem aktuell bekannten
-    WorldTour-Team (team_id gesetzt, also in der teams-Tabelle vorhanden)
-    zählen als "World Tour"-Saison - die Infobox-Historie eines Fahrers
-    listet auch niedrigere Kategorien (Continental/ProConti) auf, die
-    nicht Teil der World Tour sind und hier bewusst ausgeschlossen werden.
-    Ein offener Zeitraum (end_year IS NULL, aktuelles Team) läuft bis zur
-    laufenden Saison (RACE_SEASON_YEAR)."""
+    gespeicherten Team-Stints ab, ergänzt um die (noch meist leeren)
+    UCI-Punkte aus rider_season_points. Nur Stints bei einem aktuell
+    bekannten WorldTour-Team (team_id gesetzt, also in der teams-Tabelle
+    vorhanden) zählen als "World Tour"-Saison - die Infobox-Historie eines
+    Fahrers listet auch niedrigere Kategorien (Continental/ProConti) auf,
+    die nicht Teil der World Tour sind und hier bewusst ausgeschlossen
+    werden. Ein offener Zeitraum (end_year IS NULL, aktuelles Team) läuft
+    bis zur laufenden Saison (RACE_SEASON_YEAR)."""
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -314,12 +354,22 @@ def get_rider_seasons(rider_id: str) -> list[RiderSeason]:
             """,
             (rider_id,),
         ).fetchall()
+        points_rows = conn.execute(
+            "SELECT year, uci_points FROM rider_season_points WHERE rider_id = %s",
+            (rider_id,),
+        ).fetchall()
+    points_by_year = {row["year"]: row["uci_points"] for row in points_rows}
     seasons: list[RiderSeason] = []
     for row in rows:
         end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
         for year in range(row["start_year"], end_year + 1):
             seasons.append(
-                RiderSeason(year=year, team_name=row["team_name"], team_wiki_url=row["team_wiki_url"])
+                RiderSeason(
+                    year=year,
+                    team_name=row["team_name"],
+                    team_wiki_url=row["team_wiki_url"],
+                    uci_points=points_by_year.get(year),
+                )
             )
     seasons.sort(key=lambda s: s.year, reverse=True)
     return seasons
@@ -388,8 +438,11 @@ def export_stints() -> list[dict]:
 def export_seasons() -> list[dict]:
     """Eine Zeile pro Fahrer und Saison (Jahr) bei einem WorldTour-Team -
     dieselbe Ableitung wie get_rider_seasons, aber für alle Fahrer auf
-    einmal (für den CSV-Export). UCI-Ranking-Punkte fehlen bewusst, siehe
-    README, Abschnitt "Bekannte Lücken"."""
+    einmal (für den CSV-Export). `uci_points` ist der Platzhalter aus
+    rider_season_points (siehe ensure_season_point_placeholders) - i.d.R.
+    noch NULL, bis ein künftiger Import aus einer anderen UCI-Punkte-
+    Datenbank die Zeilen befüllt (siehe README, Abschnitt "Bekannte
+    Lücke")."""
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -401,6 +454,10 @@ def export_seasons() -> list[dict]:
             ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
             """
         ).fetchall()
+        points_rows = conn.execute(
+            "SELECT rider_id, year, uci_points FROM rider_season_points"
+        ).fetchall()
+    points_by_key = {(row["rider_id"], row["year"]): row["uci_points"] for row in points_rows}
     seasons: list[dict] = []
     for row in rows:
         end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
@@ -413,6 +470,7 @@ def export_seasons() -> list[dict]:
                     "team_id": row["team_id"],
                     "team_name": row["team_name"],
                     "team_wiki_url": row["team_wiki_url"],
+                    "uci_points": points_by_key.get((row["rider_id"], year)),
                 }
             )
     return seasons
