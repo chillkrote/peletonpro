@@ -144,52 +144,72 @@ def _parse_date_range_flexible(text: str, default_year: int) -> Optional[tuple[s
     return None
 
 
-def _parse_season_table_row(row, default_year: int) -> Optional[dict]:
-    """Generalisierte Variante von wikipedia_races._parse_race_row: macht
-    keine Annahme über Kategorie/Länderflagge, und der Name kann sowohl im
-    Zeilenkopf (<th>, World-Tour-Stil) als auch in der ersten <td> stehen
-    (viele Continental-Tour-Tabellen haben keinen <th>-Zeilenkopf)."""
-    header = row.find("th")
-    cells = row.find_all("td")
-    name_cell = header if header is not None else (cells[0] if cells else None)
-    if name_cell is None:
-        return None
+def _find_col(headers: list[str], *keywords: str) -> Optional[int]:
+    return next((i for i, h in enumerate(headers) if any(k in h for k in keywords)), None)
 
-    link = next((a for a in name_cell.select('a[href^="/wiki/"]') if a.get_text(strip=True)), None)
-    if link is None:
-        return None
-    name = link.get_text(strip=True)
-    wiki_title = link["href"][len("/wiki/"):]
 
-    date_cells = cells if header is not None else cells[1:]
-    start_date = end_date = None
-    if date_cells:
-        dates = _parse_date_range_flexible(date_cells[0].get_text(strip=True), default_year)
-        if dates:
-            start_date, end_date = dates
+def _parse_season_table(table, default_year: int) -> list[dict]:
+    """Parst EINE Tabelle spaltennamen-basiert statt positionsbasiert - die
+    Spaltenreihenfolge variiert erheblich zwischen Seitentypen (World-Tour-
+    Tabellen: Race zuerst, dann Date; Continental-Tour-Tabellen z.B. "2020
+    UCI Europe Tour": Date zuerst, dann "Race name"; ProSeries-Tabellen:
+    Ranking-Spalten zuerst, "Race" erst an Position 5). Liefert [], wenn
+    die Kopfzeile keine als Renn-Name erkennbare Spalte hat (z.B. eine
+    unrelated Wikitable auf derselben Seite)."""
+    rows = table.select("tr")
+    if not rows:
+        return []
+    header_cells = rows[0].find_all(["th", "td"])
+    headers = [c.get_text(strip=True).lower() for c in header_cells]
+    name_col = _find_col(headers, "race", "event")
+    if name_col is None:
+        return []
+    date_col = _find_col(headers, "date")
 
-    return {"name": name, "wiki_title": wiki_title, "start_date": start_date, "end_date": end_date}
+    races: list[dict] = []
+    seen: set[str] = set()
+    for row in rows[1:]:
+        cells = row.find_all(["th", "td"])
+        if name_col >= len(cells):
+            continue
+        link = next((a for a in cells[name_col].select('a[href^="/wiki/"]') if a.get_text(strip=True)), None)
+        if link is None:
+            continue
+        wiki_title = link["href"][len("/wiki/"):]
+        if wiki_title in seen:
+            continue
+        seen.add(wiki_title)
+
+        start_date = end_date = None
+        if date_col is not None and date_col < len(cells):
+            dates = _parse_date_range_flexible(cells[date_col].get_text(strip=True), default_year)
+            if dates:
+                start_date, end_date = dates
+
+        races.append(
+            {"name": link.get_text(strip=True), "wiki_title": wiki_title, "start_date": start_date, "end_date": end_date}
+        )
+    return races
 
 
 def parse_season_page(html: str, default_year: int) -> list[dict]:
     """Eigenständige Parse-Funktion, testbar ohne Netzwerkzugriff. Scannt
     ALLE Wikitables der Seite statt eine bestimmte Abschnittsüberschrift
     vorauszusetzen (die Kapitelstruktur variiert stark zwischen World-Tour-/
-    ProSeries-/den fünf Continental-Tour-Seitentypen über 16 Jahre) und
-    behält die Tabelle mit den meisten erkannten Rennen."""
+    ProSeries-/den fünf Continental-Tour-Seitentypen über mehrere Jahre) und
+    SUMMIERT über alle Tabellen mit einer erkennbaren Renn-Namen-Spalte -
+    stark frequentierte Circuits (z.B. UCI Europe Tour) verteilen ihren
+    Kalender auf mehrere Tabellen (eine pro Monat/Quartal statt einer
+    einzigen Gesamttabelle)."""
     soup = BeautifulSoup(html, "html.parser")
-    best: list[dict] = []
+    all_races: list[dict] = []
+    seen_titles: set[str] = set()
     for table in soup.select("table.wikitable"):
-        races: list[dict] = []
-        seen: set[str] = set()
-        for row in table.select("tr"):
-            race = _parse_season_table_row(row, default_year)
-            if race is not None and race["wiki_title"] not in seen:
-                seen.add(race["wiki_title"])
-                races.append(race)
-        if len(races) > len(best):
-            best = races
-    return best
+        for race in _parse_season_table(table, default_year):
+            if race["wiki_title"] not in seen_titles:
+                seen_titles.add(race["wiki_title"])
+                all_races.append(race)
+    return all_races
 
 
 def fetch_season_race_list(year: int, category: str, circuit: Optional[str] = None) -> list[dict]:
