@@ -34,11 +34,12 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/_debug/season-tables")
-def debug_season_tables(title: str):
-    """TEMPORÄR: Diagnose-Route zur Verifikation der Renn-Historie-Scraper-
+def _debug_season_tables(title: str) -> dict:
+    """TEMPORÄR: Diagnose-Helfer zur Verifikation der Renn-Historie-Scraper-
     Struktur gegen echte Wikipedia-Seiten (dieses Sandbox-Environment hat
-    keinen Netzwerkzugriff auf Wikipedia). Wird nach der Verifikation
+    keinen Netzwerkzugriff auf Wikipedia UND keinen auf die deployte
+    Render-URL - Ergebnisse laufen daher über logger.info, ausgelesen per
+    Render-Log-API statt per HTTP-Response). Wird nach der Verifikation
     wieder entfernt - siehe backend/README.md, Abschnitt "Renn-Historie"."""
     from bs4 import BeautifulSoup
 
@@ -57,6 +58,25 @@ def debug_season_tables(title: str):
     return {"title": title, "table_count": len(tables), "tables": result}
 
 
+@app.get("/api/_debug/season-tables")
+def debug_season_tables(title: str):
+    return _debug_season_tables(title)
+
+
+def _run_startup_diagnostics() -> None:
+    """TEMPORÄR: läuft einmal beim Start, loggt die Tabellenstruktur der
+    Seiten, die beim ersten Produktivlauf 0 Rennen lieferten."""
+    for title in ("2020 UCI Europe Tour", "2021 UCI Europe Tour", "2020 UCI ProSeries"):
+        try:
+            info = _debug_season_tables(title)
+            logger.info("DIAGNOSE %s: %d Tabellen", title, info["table_count"])
+            for t in info["tables"]:
+                logger.info("DIAGNOSE %s table[%d] headers=%s rows=%d", title, t["index"], t["headers"], t["row_count"])
+                logger.info("DIAGNOSE %s table[%d] sample=%s", title, t["index"], t["sample_row_html"])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("DIAGNOSE %s fehlgeschlagen: %s", title, exc)
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     try:
@@ -73,3 +93,7 @@ def on_startup() -> None:
     # startet sofort (next_run_time=now), blockiert also nicht den
     # FastAPI-Startvorgang selbst.
     app.state.scheduler = start_scheduler()
+
+    import threading
+
+    threading.Thread(target=_run_startup_diagnostics, daemon=True).start()
