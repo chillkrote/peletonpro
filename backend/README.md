@@ -292,6 +292,89 @@ für Excel/Pandas, unabhängig von der JSON-API):
 Wie `/api/riders*` liefert auch `/api/export/*` HTTP 503, solange
 `DATABASE_URL` nicht gesetzt ist.
 
+## Renn-Historie (WorldTour/ProSeries/Continental Touren seit 2020, Stand 2026-09-12)
+
+Zweite, fachlich eigenständige Datenbank in derselben Postgres-Instanz
+(`app/db_races.py`, Schema separat von `app/db.py`) mit jedem UCI-WorldTour-,
+ProSeries- und Continental-Tour-Rennen (Africa/Asia/Europe/America/Oceania
+Tour) seit `RACE_HISTORY_START_YEAR` (Default 2020), inkl. Distanz,
+Etappenzahl, Ergebnisliste (mind. Top 10, sofern Wikipedia das hergibt) und
+bei Mehretagenrennen derselben Angaben pro Etappe.
+
+**Umfang bewusst bei 2020 begonnen, nicht 2010:** World Tour + ProSeries +
+alle 5 Continental Touren seit 2010 wären schätzungsweise 3.000+ Rennen mit
+5.000-10.000+ nötigen Wikipedia-Abrufen gewesen - mehrere Tage
+Hintergrund-Scraping allein für den Erstaufbau. Ab 2020 sind es geschätzt
+1.000-1.500 Rennen. `RACE_HISTORY_START_YEAR` lässt sich jederzeit absenken
+(Umgebungsvariable) - das Seeding ist idempotent
+(`race_history_seed_log`), bereits geladene Jahre werden dabei nicht
+erneut angefasst, es kommen nur weitere hinzu.
+
+- **`app/scrapers/wikipedia_race_history.py`** - anders als die übrigen
+  Scraper in diesem Projekt NICHT einzeln gegen echte Wikipedia-Antworten
+  verifiziert (bei geschätzt 1.000+ verschiedenen Renn-Artikeln über 7
+  Jahre und 7 Kategorien/Circuits nicht praktikabel vorab durchzuprüfen).
+  Stattdessen bewusst defensiv: mehrere Titel-/Abschnitts-Kandidaten
+  probieren, alle Parse-Funktionen liefern bei unbekannter Struktur `None`/
+  leere Liste statt einen Fehler zu werfen. Gegen konstruierte HTML-
+  Fixtures (Datum-Parsing inkl. Jahreswechsel, World-Tour- und
+  Continental-Tabellenformat, Infobox, Ergebnis- und Etappen-Übersichts-
+  tabelle) unit-getestet; die tatsächliche Trefferquote über die volle
+  Bandbreite realer Artikel zeigt sich erst im produktiven Lauf (siehe
+  `race_history_seed_log.race_count` und die `results_fetched_at`-Quote
+  als Indikator, ob eine Kombination unerwartet leer/unvollständig blieb).
+- **Zwei Scheduler-Phasen** (`scheduler.refresh_race_history`, läuft alle
+  `REFRESH_INTERVAL_RACE_HISTORY` Sekunden, Default 3 Min):
+  1. *Seeding*: pro (Kategorie, Circuit, Saison), die noch nicht versucht
+     wurde, wird einmal die Saison-Übersichtsseite abgerufen (z.B. "2021
+     UCI World Tour", "2021 UCI Africa Tour") und jedes gefundene Rennen
+     als Skeleton-Zeile (Name, Zeitraum, Wikipedia-URL) angelegt - schnell
+     (ein Abruf pro Kombination), läuft komplett in einem Durchgang.
+  2. *Backfill*: für bis zu `RACE_HISTORY_DETAIL_BATCH_SIZE` Rennen ohne
+     Detail-Daten wird die eigene Wikipedia-Seite abgerufen - das ist der
+     teure Teil (bei einem 21-Etappen-Grand-Tour mit dokumentierten
+     Einzeletappen-Ergebnissen leicht 20+ Requests für ein einziges
+     Rennen), daher batchweise über viele Läufe verteilt, priorisiert nach
+     Kategorie (World Tour zuerst) und Saison (neueste zuerst - eher
+     vollständig dokumentiert als ältere Rennen).
+- **Historische Formatbrüche**, für die Kandidaten-Titel probiert werden:
+  die "UCI World Tour" heißt erst ab 2011 so (davor "UCI ProTour" bis
+  2010 - relevant erst, wenn `RACE_HISTORY_START_YEAR` auf 2010 abgesenkt
+  wird); UCI ProSeries gibt es erst seit 2020 (frühere Jahre liefern
+  planmäßig 0 Rennen); Continental-Tour-Saisons liefen früher über den
+  Winter (z.B. "2010–11 UCI Africa Tour"), neuere über das Kalenderjahr.
+- **Etappen-Details sind best-effort**: Datum/Distanz/Start-Ziel stammen
+  aus einer Etappen-Übersichtstabelle irgendwo auf der Rennseite (Spalten-
+  namen variieren zwischen Rennen/Jahren), Etappen-ERGEBNISSE aus eigenen
+  "Stage N"-Abschnitten, sofern die Rennseite solche hat - bei kleineren
+  oder älteren Rennen oft nicht vorhanden. Fehlt eine Quelle, bleibt das
+  jeweilige Feld leer statt die ganze Etappe/das ganze Rennen zu verwerfen.
+
+### Bekannte Lücken: Höhenmeter (Platzhalter) und Veranstalter-Website (nicht weiter gescraped)
+
+- **Höhenmeter** (`races.elevation_m`, `race_stages.elevation_m`): wie bei
+  `riders.uci_points` auf Wikipedia für kein Rennen strukturiert erfasst -
+  nur als unstrukturierte Profil-Grafik auf manchen Rennseiten, nicht als
+  Zahl. Bleibt NULL, bis ein künftiger Import aus einer anderen Quelle die
+  Werte nachträgt; die Spalte existiert bereits dafür.
+- **Veranstalter-Website** (`races.organizer_website`, z.B.
+  amstelgoldrace.nl): wird aus der Wikipedia-Infobox übernommen, sofern
+  dort als "Website" gepflegt - aber NICHT selbst weiter gescraped. Jede
+  Veranstalter-Seite hat ihre eigene, oft clientseitig gerenderte Struktur
+  ohne gemeinsames Muster (anders als Wikipedias einheitliches Infobox-
+  Template, das die gesamte Scraping-Architektur dieses Projekts erst
+  praktikabel macht) - ein generischer Parser dafür wäre pro Rennen
+  Handarbeit und würde nicht im großen Maßstab funktionieren. Das Feld ist
+  als Link für Nutzer gedacht, nicht als weitere Scraping-Quelle.
+
+### CSV-Export
+
+| Endpunkt | Inhalt |
+|---|---|
+| `GET /api/export/races.csv` | komplette `races`-Tabelle |
+| `GET /api/export/race_results.csv` | `race_results` + aufgelöste `race_name`/`stage_number` (NULL = Gesamt-/Eintagesrennen-Ergebnis) |
+| `GET /api/export/race_stages.csv` | `race_stages` + aufgelöste `race_name` |
+
 ## Lokal starten
 
 ```bash
@@ -328,6 +411,13 @@ API läuft dann unter `http://localhost:8001`, z.B.
    Cargo-Cache-Verzeichnis scheitert (`Build failed`). Bei einem Upgrade
    von FastAPI/Pydantic kann die gepinnte Version ggf. wieder angehoben
    werden, sobald aktuelle Wheels verfügbar sind.
+6. **Renn-Historie-Backfill (siehe oben) braucht durchgängige Laufzeit:**
+   der Free-Tier-Schlafmodus (Punkt 3) pausiert auch diesen Hintergrund-Job
+   - ohne eingehende Requests kommt der mehrstündige/-tägige Erstaufbau
+   ins Stocken, bis der nächste Request den Service aufweckt. Für einen
+   zügigen, durchgängigen Erstaufbau entweder einen "Always On"-Plan
+   nutzen oder den Service während des Backfills regelmäßig anpingen
+   (z.B. `curl .../api/health` per Cron).
 
 ## API-Endpunkte
 
@@ -340,15 +430,18 @@ API läuft dann unter `http://localhost:8001`, z.B.
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
 | `GET /api/riders?team=<team_id>` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
 | `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (rohe Team-Zeiträume) und `seasons` (pro Saison abgeleiteter Team-Link, siehe "Vor-/Nachname, Saison-Team-Links, Strava-Profile" oben) |
+| `GET /api/race-history?season=&category=wt\|proseries\|continental&circuit=africa\|asia\|europe\|america\|oceania&limit=&offset=` | Renn-Historie seit 2020, gefiltert/paginiert, ohne Ergebnisse/Etappen (siehe "Renn-Historie" oben) |
+| `GET /api/race-history/{id}` | Ein Rennen inkl. `results` (Top 10+) und bei Mehretagenrennen `stages[]` (je Etappe eigene `results`) |
 | `GET /api/health` | Health-Check |
 
 Da die Teams-Quelle (Wikipedia) nur WorldTeams abdeckt, liefert
 `category=pro` und `category=cont` aktuell immer eine leere Liste.
 
-Die `/api/riders*`-Endpunkte liefern `{"riders": [], "error": "..."}` bzw.
-HTTP 503, solange `DATABASE_URL` nicht gesetzt ist (siehe "Fahrer-
-Datenbank" oben) - kein `last_updated`, da sie nicht über den Cache-
-Mechanismus laufen.
+Die `/api/riders*`- und `/api/race-history*`-Endpunkte liefern
+`{"riders": [], "error": "..."}` bzw. `{"races": [], "error": "..."}` (Liste)
+oder HTTP 503 (Detail), solange `DATABASE_URL` nicht gesetzt ist (siehe
+"Fahrer-Datenbank"/"Renn-Historie" oben) - kein `last_updated`, da sie
+nicht über den Cache-Mechanismus laufen.
 
 Jede Antwort enthält zusätzlich `last_updated` (ISO-Timestamp des letzten
 erfolgreichen Scraping-Laufs) und `error` (Fehlermeldung des letzten

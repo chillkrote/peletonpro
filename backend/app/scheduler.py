@@ -10,10 +10,15 @@ from datetime import date, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import cache, db
+from . import cache, db, db_races
 from .config import (
+    RACE_HISTORY_CIRCUITS,
+    RACE_HISTORY_DETAIL_BATCH_SIZE,
+    RACE_HISTORY_START_YEAR,
+    RACE_SEASON_YEAR,
     REFRESH_INTERVAL_CALENDAR,
     REFRESH_INTERVAL_NEWS,
+    REFRESH_INTERVAL_RACE_HISTORY,
     REFRESH_INTERVAL_RESULTS,
     REFRESH_INTERVAL_RIDERS,
     REFRESH_INTERVAL_TEAMS,
@@ -24,6 +29,7 @@ from .models import Race, Team
 from .news.rss import fetch_all_news
 from .scrapers.wikidata import fetch_strava_urls
 from .scrapers.wikipedia import wiki_title_from_url
+from .scrapers.wikipedia_race_history import fetch_race_details, fetch_season_race_list
 from .scrapers.wikipedia_races import fetch_race_calendar, fetch_race_result
 from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team, split_name
 from .scrapers.wikipedia_teams import fetch_current_worldteams
@@ -183,6 +189,93 @@ def refresh_riders() -> None:
         )
 
 
+def _race_history_series() -> list[tuple[str, str | None]]:
+    """Alle (Kategorie, Circuit)-Kombinationen, die abgedeckt werden -
+    Circuit ist nur bei category == 'continental' gesetzt."""
+    series: list[tuple[str, str | None]] = [("wt", None), ("proseries", None)]
+    series += [("continental", circuit) for circuit in RACE_HISTORY_CIRCUITS]
+    return series
+
+
+def refresh_race_history() -> None:
+    """Baut die (persistente) Renn-Historie-Datenbank auf: World Tour +
+    ProSeries + alle Continental Touren seit RACE_HISTORY_START_YEAR (siehe
+    app/db_races.py + scrapers/wikipedia_race_history.py).
+
+    Phase 1 (Seeding): für jede (Kategorie, Circuit, Saison)-Kombination,
+    die noch nicht versucht wurde (race_history_seed_log), wird EINMAL die
+    Wikipedia-Saison-Übersichtsseite abgerufen und jedes gefundene Rennen
+    als Skeleton-Zeile (Name, Zeitraum, Wiki-URL) angelegt - günstig (ein
+    Abruf pro Kombination), läuft daher komplett in einem Durchgang statt
+    gebatcht. RACE_HISTORY_START_YEAR lässt sich später absenken (z.B. auf
+    2010), um weitere Jahre nachzuholen - bereits geseedete Kombinationen
+    werden dabei nicht erneut angefasst.
+
+    Phase 2 (Backfill): für bis zu RACE_HISTORY_DETAIL_BATCH_SIZE Rennen
+    ohne Detail-Daten wird die eigene Wikipedia-Seite abgerufen (Distanz,
+    Etappenzahl, Ergebnisliste, bei Mehretagenrennen zusätzlich pro
+    Etappe) - das ist der teure Teil, daher batchweise über viele Läufe
+    verteilt, priorisiert nach Kategorie (World Tour zuerst) und Saison
+    (siehe db_races.get_races_missing_details).
+    """
+    if not db.is_configured():
+        logger.info("Renn-Historie-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
+        return
+
+    seeded_now = 0
+    for category, circuit in _race_history_series():
+        for year in range(RACE_HISTORY_START_YEAR, RACE_SEASON_YEAR + 1):
+            if db_races.is_season_seeded(category, year, circuit):
+                continue
+            label = f"{category}{f'/{circuit}' if circuit else ''} {year}"
+            try:
+                races = fetch_season_race_list(year, category, circuit)
+                for race in races:
+                    db_races.upsert_race_skeleton(
+                        season=year,
+                        category=category,
+                        circuit=circuit,
+                        name=race["name"],
+                        start_date=race["start_date"],
+                        end_date=race["end_date"],
+                        wiki_url=race["wiki_url"],
+                    )
+                db_races.mark_season_seeded(category, year, len(races), circuit)
+                seeded_now += 1
+                if races:
+                    logger.info("Renn-Historie geseedet: %s - %d Rennen", label, len(races))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Saison-Seeding fehlgeschlagen für %s: %s", label, exc)
+    if seeded_now:
+        logger.info("Renn-Historie-Seeding: %d neue Saison/Kategorie-Kombinationen verarbeitet", seeded_now)
+
+    pending = db_races.get_races_missing_details(limit=RACE_HISTORY_DETAIL_BATCH_SIZE)
+    fetched = 0
+    for race_row in pending:
+        try:
+            wiki_title = wiki_title_from_url(race_row["wiki_url"])
+            details = fetch_race_details(wiki_title, race_row["season"])
+            db_races.replace_race_details(
+                race_row["id"],
+                num_stages=details["num_stages"],
+                distance_km=details["distance_km"],
+                organizer_website=details["organizer_website"],
+                results=details["results"],
+                stages=details["stages"],
+            )
+            fetched += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Detail-Scraping für '%s' fehlgeschlagen: %s", race_row["name"], exc)
+    if pending:
+        remaining = db_races.get_races_missing_details_count()
+        logger.info(
+            "Renn-Historie-Details geladen: %d/%d in diesem Lauf, noch %d Rennen ausstehend",
+            fetched,
+            len(pending),
+            remaining,
+        )
+
+
 def refresh_news() -> None:
     try:
         news = fetch_all_news()
@@ -198,6 +291,7 @@ JOBS = [
     (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar"),
     (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results"),
     (refresh_riders, REFRESH_INTERVAL_RIDERS, "refresh_riders"),
+    (refresh_race_history, REFRESH_INTERVAL_RACE_HISTORY, "refresh_race_history"),
     (refresh_news, REFRESH_INTERVAL_NEWS, "refresh_news"),
 ]
 

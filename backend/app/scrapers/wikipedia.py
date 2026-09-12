@@ -40,6 +40,32 @@ def fetch_section(page: str, section_line_substr: str) -> str:
     raise ValueError(f"Abschnitt mit '{section_line_substr}' nicht gefunden auf Seite '{page}'")
 
 
+def fetch_full_page(page: str) -> str:
+    """Liefert das gerenderte HTML der KOMPLETTEN Seite (kein section=-
+    Parameter) - für Fälle, in denen die relevante Tabelle nicht
+    zuverlässig unter einer bestimmten Abschnittsüberschrift zu finden ist
+    (z.B. stark variierende Kapitelstruktur über viele verschiedene
+    Renn-Saison-Artikel hinweg, siehe scrapers/wikipedia_race_history.py)."""
+    data = _api_get({"action": "parse", "page": page, "prop": "text"})
+    return data["parse"]["text"]["*"]
+
+
+def fetch_sections(page: str) -> list[dict]:
+    """Liefert die rohe Abschnitts-Liste einer Seite (je Eintrag u.a. `line`
+    = Überschrift, `index` = Abschnitts-Index für fetch_section-artige
+    Folgeabrufe) - für Fälle, in denen alle Abschnitte durchsucht werden
+    müssen (z.B. "Stage 1", "Stage 2", ... auf Etappenrennen-Seiten)."""
+    data = _api_get({"action": "parse", "page": page, "prop": "sections"})
+    return data["parse"]["sections"]
+
+
+def fetch_section_by_index(page: str, index: str) -> str:
+    """Wie fetch_section, aber mit bereits bekanntem Abschnitts-Index (aus
+    fetch_sections) statt erneuter Suche nach der Überschrift."""
+    data = _api_get({"action": "parse", "page": page, "prop": "text", "section": index})
+    return data["parse"]["text"]["*"]
+
+
 def fetch_lead_section(page: str) -> str:
     """Liefert das gerenderte HTML des Lead-Abschnitts (vor der ersten
     Überschrift) einer Seite - bei Personen-Artikeln enthält dieser die

@@ -10,7 +10,7 @@ from typing import Callable
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .. import db
+from .. import db, db_races
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -58,3 +58,18 @@ def export_stints_csv():
 @router.get("/seasons.csv")
 def export_seasons_csv():
     return _export(db.export_seasons, "rider_seasons.csv")
+
+
+@router.get("/races.csv")
+def export_races_csv():
+    return _export(db_races.export_races, "races.csv")
+
+
+@router.get("/race_results.csv")
+def export_race_results_csv():
+    return _export(db_races.export_race_results, "race_results.csv")
+
+
+@router.get("/race_stages.csv")
+def export_race_stages_csv():
+    return _export(db_races.export_race_stages, "race_stages.csv")

@@ -135,3 +135,64 @@ class RiderSeason(BaseModel):
 class RiderDetail(Rider):
     history: list[RiderStint] = []
     seasons: list[RiderSeason] = []
+
+
+# ---------------------------------------------------------------------------
+# Renn-Historie (app/db_races.py): eigenständige, persistente Datenbank aller
+# UCI-WorldTour-, ProSeries- und Continental-Tour-Rennen seit 2010 - getrennt
+# von Race/LiveResult oben, die die AKTUELLE Saison aus dem flüchtigen
+# JSON-Cache bedienen (app/cache.py, für Kalender/Live-Ticker auf der
+# Startseite). Siehe backend/README.md, Abschnitt "Renn-Historie".
+# ---------------------------------------------------------------------------
+
+
+class RaceResultEntry(BaseModel):
+    """Eine Platzierung in einem Gesamt-/Eintagesrennen-Ergebnis oder einer
+    einzelnen Etappe - mindestens die Top 10, sofern die Wikipedia-Quelle
+    das hergibt (manche wenig dokumentierten Rennen/Etappen haben weniger)."""
+
+    position: int
+    rider: str
+    team: Optional[str] = None
+    time_or_gap: Optional[str] = None
+
+
+class RaceStage(BaseModel):
+    """Eine einzelne Etappe eines Mehretagenrennens."""
+
+    stage_number: int
+    date: Optional[str] = None
+    distance_km: Optional[float] = None
+    elevation_m: Optional[int] = None  # Platzhalter - siehe RaceRecord.elevation_m
+    start_location: Optional[str] = None
+    end_location: Optional[str] = None
+    results: list[RaceResultEntry] = []
+
+
+class RaceRecord(BaseModel):
+    """Ein einzelnes Rennen (Eintagesrennen oder komplettes Mehretagenrennen
+    mit allen Etappen) aus der Renn-Historien-Datenbank."""
+
+    id: str
+    name: str
+    season: int
+    category: Literal["wt", "proseries", "continental"]
+    circuit: Optional[str] = None  # nur bei category == "continental": africa/asia/europe/america/oceania
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    num_stages: Optional[int] = None
+    distance_km: Optional[float] = None
+    elevation_m: Optional[int] = None
+    """Platzhalter: auf Wikipedia für kein Rennen strukturiert erfasst (siehe
+    backend/README.md, Abschnitt "Bekannte Lücke") - bleibt NULL, bis ein
+    künftiger Import aus einer anderen Quelle die Werte nachträgt."""
+    wiki_url: Optional[str] = None
+    organizer_website: Optional[str] = None
+    """Offizielle Veranstalter-Website (z.B. amstelgoldrace.nl), sofern in
+    der Wikipedia-Infobox als 'Website' gepflegt - NICHT selbst gescraped
+    (siehe backend/README.md, Abschnitt "Bekannte Lücke": jede Veranstalter-
+    Seite hat ihre eigene, oft JS-basierte Struktur ohne gemeinsames
+    Muster, anders als Wikipedias einheitliches Infobox-Template)."""
+    results_fetched_at: Optional[str] = None
+    results: list[RaceResultEntry] = []
+    stages: list[RaceStage] = []
