@@ -32,4 +32,9 @@ def get_rider(rider_id: str):
     if rider is None:
         raise HTTPException(status_code=404, detail="Fahrer nicht gefunden")
     history = db.get_rider_stints(rider_id)
-    return {**rider.model_dump(), "history": [s.model_dump() for s in history]}
+    seasons = db.get_rider_seasons(rider_id)
+    return {
+        **rider.model_dump(),
+        "history": [s.model_dump() for s in history],
+        "seasons": [s.model_dump() for s in seasons],
+    }

@@ -1,20 +1,56 @@
-// ===== TEAMS-SEITE =====
-// Kachel-Grid aller Teams. Klick führt zur Team-Detailseite (team.html?id=...).
+// ===== TEAMS & FAHRER-SEITE =====
+// Zwei Tabs in einer Seite: "Teams" (Kachel-Grid, Klick führt zur
+// Team-Detailseite team.html?id=...) und "Fahrer" (komplette, durchsuch-
+// bare Fahrerliste aus der Datenbank, siehe js/riders.js). Der Fahrer-Tab
+// wird erst beim ersten Klick geladen, damit ein Seitenaufruf ohne
+// Fahrer-Interesse nicht unnötig ~500 Datensätze lädt.
 document.addEventListener('DOMContentLoaded', async () => {
-    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams' }] });
+    renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer' }] });
 
-    const content = document.getElementById('teams-content');
-    if (renderComingSoonIfWomen(content)) return;
+    const teamsContent = document.getElementById('teams-content');
+    const ridersContent = document.getElementById('riders-content');
+    if (renderComingSoonIfWomen(teamsContent)) return;
 
-    content.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Teams…</h3></div>`;
+    initTabs(teamsContent, ridersContent);
+
+    teamsContent.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Teams…</h3></div>`;
     try {
         const { teams } = await Api.getTeams();
-        renderTeams(content, teams || []);
+        renderTeams(teamsContent, teams || []);
     } catch (err) {
         console.error('Fehler beim Laden der Teams:', err);
-        content.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>Teams konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
+        teamsContent.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>Teams konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
     }
 });
+
+let teamsSubtitleText = 'UCI WorldTeams der World Tour';
+
+function initTabs(teamsContent, ridersContent) {
+    const tabs = document.getElementById('teams-tabs');
+    if (!tabs) return;
+    const subtitle = document.getElementById('teams-subtitle');
+    let ridersLoaded = false;
+
+    tabs.querySelectorAll('button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            if (btn.classList.contains('active')) return;
+            tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+
+            const showRiders = btn.dataset.tab === 'riders';
+            teamsContent.hidden = showRiders;
+            ridersContent.hidden = !showRiders;
+            if (subtitle) {
+                subtitle.textContent = showRiders
+                    ? 'Alle Fahrer der World Tour, standardmäßig nach Nachname sortiert'
+                    : teamsSubtitleText;
+            }
+            if (showRiders && !ridersLoaded) {
+                ridersLoaded = true;
+                initRidersTab(ridersContent);
+            }
+        });
+    });
+}
 
 function initials(name) {
     return name
@@ -27,8 +63,9 @@ function initials(name) {
 }
 
 function renderTeams(container, teams) {
+    teamsSubtitleText = `${teams.length} UCI WorldTeams der World Tour`;
     const subtitle = document.getElementById('teams-subtitle');
-    if (subtitle) subtitle.textContent = `${teams.length} UCI WorldTeams der World Tour`;
+    if (subtitle) subtitle.textContent = teamsSubtitleText;
 
     if (teams.length === 0) {
         container.innerHTML = `<div class="state-panel"><i class="fas fa-users-slash"></i><h3>Keine Teams gefunden</h3></div>`;

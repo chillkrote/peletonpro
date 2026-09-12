@@ -57,6 +57,21 @@ def wiki_title_from_url(url: str) -> str:
     return urllib.parse.unquote(tail).replace("_", " ")
 
 
+def _resolve_titles(batch: list[str], query: dict) -> dict[str, str]:
+    """Bildet jeden Titel aus `batch` (unser Input) auf den von MediaWiki
+    aufgelösten End-Titel ab - normalized dann redirects, in dieser
+    Reihenfolge verkettet, da ein Titel erst normalisiert und danach ggf.
+    weitergeleitet wird. Gemeinsam genutzt von fetch_page_images und
+    fetch_wikidata_ids, damit deren Aufrufer nicht selbst durch
+    `normalized`/`redirects` navigieren müssen."""
+    resolved: dict[str, str] = {t: t for t in batch}
+    for entry in query.get("normalized", []):
+        resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
+    for entry in query.get("redirects", []):
+        resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
+    return resolved
+
+
 def fetch_page_images(titles: list[str], thumb_size: int = 200) -> dict[str, str]:
     """Liefert Thumbnail-Bild-URLs (i.d.R. Infobox-Logo/Trikot) für mehrere
     Wikipedia-Seiten in einem einzigen Request (`action=query&prop=pageimages`,
@@ -89,17 +104,44 @@ def fetch_page_images(titles: list[str], thumb_size: int = 200) -> dict[str, str
             if title and thumb:
                 thumb_by_final_title[title] = thumb
 
-        # normalized/redirects bilden jeweils "from" (unser Input) -> "to"
-        # (aufgelöster Titel) ab - in dieser Reihenfolge verketten, da ein
-        # Titel erst normalisiert und danach ggf. weitergeleitet wird.
-        resolved: dict[str, str] = {t: t for t in batch}
-        for entry in query.get("normalized", []):
-            resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
-        for entry in query.get("redirects", []):
-            resolved = {k: (entry["to"] if v == entry["from"] else v) for k, v in resolved.items()}
-
-        for original_title, final_title in resolved.items():
+        for original_title, final_title in _resolve_titles(batch, query).items():
             thumb = thumb_by_final_title.get(final_title)
             if thumb:
                 result[original_title] = thumb
+    return result
+
+
+def fetch_wikidata_ids(titles: list[str]) -> dict[str, str]:
+    """Liefert die Wikidata-Q-Nummer (z.B. 'Q1630132') für mehrere
+    Wikipedia-Seiten in einem Request (`action=query&prop=pageprops`, bis
+    zu 50 Titel pro Aufruf) - Grundlage für den Wikidata-Abgleich in
+    scrapers/wikidata.py (z.B. Strava-Profile über Property P5283). Seiten
+    ohne verknüpftes Wikidata-Item fehlen einfach im Ergebnis-Dict."""
+    if not titles:
+        return {}
+    result: dict[str, str] = {}
+    for i in range(0, len(titles), 50):
+        batch = titles[i:i + 50]
+        data = _api_get(
+            {
+                "action": "query",
+                "titles": "|".join(batch),
+                "prop": "pageprops",
+                "ppprop": "wikibase_item",
+            }
+        )
+        query = data.get("query", {})
+        pages = query.get("pages", {})
+
+        qid_by_final_title: dict[str, str] = {}
+        for page in pages.values():
+            title = page.get("title")
+            qid = page.get("pageprops", {}).get("wikibase_item")
+            if title and qid:
+                qid_by_final_title[title] = qid
+
+        for original_title, final_title in _resolve_titles(batch, query).items():
+            qid = qid_by_final_title.get(final_title)
+            if qid:
+                result[original_title] = qid
     return result

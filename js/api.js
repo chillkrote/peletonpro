@@ -55,4 +55,10 @@ const Api = {
     getNews(limit = 30) {
         return apiGet(`/api/news?limit=${limit}`);
     },
+    getRiders(team) {
+        return apiGet(`/api/riders${team ? `?team=${encodeURIComponent(team)}` : ''}`);
+    },
+    getRider(id) {
+        return apiGet(`/api/riders/${encodeURIComponent(id)}`);
+    },
 };

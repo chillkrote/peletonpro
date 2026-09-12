@@ -190,6 +190,78 @@ wäre.
   fälschlich "verwaiste" Fahrer zu erkennen. Bekannte Einschränkung,
   aktuell nicht behoben.
 
+### Vor-/Nachname, Saison-Team-Links, Strava-Profile (Stand 2026-09-12)
+
+- **Namenstrennung:** `riders.first_name`/`riders.last_name` werden beim
+  Kader-Scraping mit `wikipedia_riders.split_name()` aus dem vollen Namen
+  abgeleitet. Nachname = letztes Wort plus vorangehende bekannte
+  Namenspartikel (`van`, `der`, `von`, `de`, `la`, ... - siehe
+  `NAME_PARTICLES`), damit z.B. "Mathieu van der Poel" korrekt als Vorname
+  "Mathieu" / Nachname "van der Poel" gesplittet wird. Kein Wörterbuch
+  aller Sprachen - Einzelfälle mit unüblichen Namensformen können falsch
+  getrennt werden. **Standard-Sortierung ist jetzt nach Nachname**
+  (`ORDER BY last_name, first_name`) statt nach vollem Namen, sowohl in
+  `GET /api/riders` als auch im CSV-Export.
+- **Team-Link pro Saison:** `GET /api/riders/{id}` liefert zusätzlich zu
+  `history` (den rohen Zeiträumen aus der Wikipedia-Infobox) ein Feld
+  `seasons` - eine Zeile pro Kalenderjahr, das der Fahrer laut Historie bei
+  einem **aktuell bekannten WorldTour-Team** (also einem Team aus unserer
+  `teams`-Tabelle) verbracht hat, jeweils mit Link auf die Team-Wikipedia-
+  Seite (`db.get_rider_seasons`, CSV-Äquivalent `export_seasons` /
+  `GET /api/export/seasons.csv`). Zeiträume bei Teams, die nicht in
+  `teams` stehen (typischerweise Continental-/ProConti-Stationen aus der
+  Nachwuchszeit), zählen bewusst NICHT als World-Tour-Saison. Ein offenes
+  Ende ("2019–", aktuelles Team) läuft bis `RACE_SEASON_YEAR`.
+- **Strava-Profile:** `riders.strava_url` wird von
+  `scrapers/wikidata.py` befüllt, im selben `refresh_riders`-Job wie die
+  Team-Historie, gebatcht über `STRAVA_BATCH_SIZE` Fahrer pro Lauf
+  (`strava_checked_at IS NULL`). Statt einer Ad-hoc-Websuche pro Fahrer
+  (skaliert nicht für ~500 Fahrer und ist nicht Teil dieser
+  Scraping-Architektur) wird die öffentliche, strukturierte
+  Wikidata-Property
+  [P5283 "Strava ID of a professional sport person"](https://www.wikidata.org/wiki/Property:P5283)
+  genutzt: Wikipedia-Titel -> Wikidata-QID (`action=query&prop=pageprops`)
+  -> Strava-Athleten-ID (`action=wbgetentities`), beides gebatcht (bis zu
+  50 pro Request). Nur ein Bruchteil der Fahrer hat diese Property
+  gepflegt - fehlende Treffer sind normal, kein Fehler. Der Check läuft
+  pro Fahrer nur einmal (wie bei der Historie), nicht periodisch erneut -
+  ein nachträglich angelegtes Strava-Profil wird also nicht automatisch
+  nachgetragen.
+
+### Bekannte Lücke: UCI-Ranking-Punkte pro Saison (Platzhalter, Stand 2026-09-12)
+
+UCI-Ranking-Punkte pro Fahrer und Saison lassen sich **nicht automatisiert
+scrapen** - Recherche ergab keine zuverlässige, in großem Umfang
+abrufbare Quelle dafür:
+
+- Wikipedia-Fahrerartikel (Infobox `Template:Infobox cyclist`) haben kein
+  Feld für UCI-Punkte pro Saison - nur Team-Saison-Seiten
+  (`Template:Infobox cycling team season`) zeigen ein Team-Gesamtranking,
+  keine Einzelfahrer-Punkte.
+- procyclingstats.com führt diese Daten (`/rankings/me/uci-season-individual`),
+  blockiert aber Cloud-Hosting-IP-Bereiche wie Render (siehe oben,
+  "Historie: procyclingstats.com blockiert Cloud-Hosting").
+- uci.org selbst ist eine clientseitig gerenderte SPA ohne per HTTP
+  scrapbare Rankings (siehe oben, "uci.org als Alternative geprüft").
+
+Da die Werte später aus einer anderen Datenbank nachgetragen werden
+sollen, legt `db.ensure_season_point_placeholders()` (läuft in jedem
+`refresh_riders`-Zyklus) für **jede** WorldTour-Saison eines Fahrers eine
+feste Platzhalter-Zeile in der neuen Tabelle `rider_season_points`
+(`rider_id`, `year`, `uci_points` - `uci_points` initial `NULL`) an,
+per SQL aus den vorhandenen `rider_team_stints` abgeleitet
+(`generate_series` über `start_year`..`COALESCE(end_year, RACE_SEASON_YEAR)`,
+nur für Stints mit bekanntem `team_id`). So hat ein künftiger Import ein
+verlässliches `(rider_id, year)`-Ziel für ein `UPDATE ... SET uci_points = ...`,
+ohne selbst ermitteln zu müssen, welche Kombinationen überhaupt existieren.
+Bereits importierte Werte werden nie überschrieben (`ON CONFLICT DO
+NOTHING` beim Anlegen der Platzhalter), und mit fortschreitender Saison
+(`RACE_SEASON_YEAR` steigt) legt derselbe Job automatisch neue
+Platzhalter für laufende Team-Zugehörigkeiten an. `uci_points` erscheint
+sowohl in `GET /api/riders/{id}` (`seasons[].uci_points`) als auch in
+`GET /api/export/seasons.csv` - aktuell überall `null`/leer, bis der
+externe Import läuft.
+
 **Render-Postgres-Free-Tier-Hinweis:** die kostenlose Datenbank läuft nach
 30 Tagen ab (`expiresAt` bei Erstellung) und wird dann von Render gelöscht,
 sofern sie nicht vorher auf einen bezahlten Plan angehoben wird. Rechtzeitig
@@ -204,6 +276,21 @@ from app.scrapers.wikipedia_riders import parse_team_roster, parse_rider_history
 roster = parse_team_roster(open("roster_section.html", encoding="utf-8").read())
 history = parse_rider_history(open("rider_infobox.html", encoding="utf-8").read())
 ```
+
+### CSV-Export
+
+`app/routers/export.py` liefert die Tabellen roh als CSV-Download (z.B.
+für Excel/Pandas, unabhängig von der JSON-API):
+
+| Endpunkt | Inhalt |
+|---|---|
+| `GET /api/export/teams.csv` | komplette `teams`-Tabelle |
+| `GET /api/export/riders.csv` | `riders` (inkl. `first_name`/`last_name`/`strava_url`) + aufgelöster `current_team_name`, sortiert nach Nachname |
+| `GET /api/export/stints.csv` | `rider_team_stints` + aufgelöste `rider_name`/`team_wiki_url` (Zeiträume, nicht pro Saison) |
+| `GET /api/export/seasons.csv` | eine Zeile pro Fahrer und Kalenderjahr bei einem WorldTour-Team (aus den Stints abgeleitet, siehe oben) |
+
+Wie `/api/riders*` liefert auch `/api/export/*` HTTP 503, solange
+`DATABASE_URL` nicht gesetzt ist.
 
 ## Lokal starten
 
@@ -251,8 +338,8 @@ API läuft dann unter `http://localhost:8001`, z.B.
 | `GET /api/calendar` | Kalenderansicht (ein Eintrag pro Rennstart) |
 | `GET /api/results?status=live\|finished\|upcoming` | (Live-)Ergebnisse |
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
-| `GET /api/riders?team=<team_id>` | Fahrer, optional nach aktuellem Team gefiltert |
-| `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (Team-Wechsel-Liste) |
+| `GET /api/riders?team=<team_id>` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
+| `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (rohe Team-Zeiträume) und `seasons` (pro Saison abgeleiteter Team-Link, siehe "Vor-/Nachname, Saison-Team-Links, Strava-Profile" oben) |
 | `GET /api/health` | Health-Check |
 
 Da die Teams-Quelle (Wikipedia) nur WorldTeams abdeckt, liefert

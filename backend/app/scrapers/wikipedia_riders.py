@@ -34,6 +34,14 @@ TEAM_HISTORY_LABELS = ("professional teams", "teams", "team")
 YEAR_RANGE_RE = re.compile(r"^(\d{4})\s*[–-]\s*(\d{4})?$")
 YEAR_SINGLE_RE = re.compile(r"^(\d{4})$")
 
+# Im Radsport häufige Namenspartikel, die zum Nachnamen gehören statt zum
+# Vornamen (z.B. "Wout van Aert" -> Nachname "van Aert", "Mathieu van der
+# Poel" -> Nachname "van der Poel").
+NAME_PARTICLES = {
+    "van", "der", "den", "von", "de", "la", "le", "du", "di", "da",
+    "dos", "das", "del", "els", "ter", "ten",
+}
+
 
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
@@ -165,6 +173,26 @@ def fetch_rider_history(rider_wiki_title: str) -> RiderHistory:
 
 def rider_id_for(name: str) -> str:
     return _slugify(name)
+
+
+def split_name(full_name: str) -> tuple[str, str]:
+    """Trennt einen vollen Namen (wie er auf Wikipedia-Kaderlisten steht) in
+    Vor- und Nachname. Der Nachname ist das letzte Wort plus alle direkt
+    davorstehenden bekannten Namenspartikel (siehe NAME_PARTICLES) - der
+    Standardfall (ein Vor-, ein Nachname) ist damit korrekt, Sonderfälle
+    mit mehrteiligen Nachnamen (van/de/von/...) ebenfalls. Ein einzelnes
+    Wort (kein Leerzeichen, in der Praxis kaum vorkommend) wird komplett
+    als Nachname behandelt, damit die Standard-Sortierung nach Nachname
+    ihn nicht verliert."""
+    parts = full_name.split()
+    if len(parts) <= 1:
+        return "", full_name
+    split_index = len(parts) - 1
+    while split_index > 0 and parts[split_index - 1].lower() in NAME_PARTICLES:
+        split_index -= 1
+    first_name = " ".join(parts[:split_index])
+    last_name = " ".join(parts[split_index:])
+    return first_name, last_name
 
 
 def roster_riders_for_team(team: Team) -> list[tuple[str, RosterRider]]:

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import db
 from .config import CORS_ORIGINS
-from .routers import news, races, results, riders, teams
+from .routers import export, news, races, results, riders, teams
 from .scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +24,7 @@ app.include_router(teams.router)
 app.include_router(races.router)
 app.include_router(results.router)
 app.include_router(riders.router)
+app.include_router(export.router)
 app.include_router(news.router)
 
 

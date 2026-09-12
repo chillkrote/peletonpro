@@ -1,0 +1,161 @@
+// ===== FAHRER: gemeinsame Bausteine =====
+// Wird von drei Stellen genutzt: dem "Fahrer"-Tab auf teams.html (komplette,
+// durchsuch-/filterbare Liste), dem Kader-Ausschnitt auf der Team-Detailseite
+// (team.js) und der Fahrer-Detailseite (rider.js). Bündelt hier, damit
+// Darstellung (Initialen, Geburtsdatum, Strava-Link, Team-Badge) überall
+// gleich aussieht.
+
+function riderInitials(name) {
+    return (name || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((w) => w[0])
+        .join('')
+        .toUpperCase();
+}
+
+function formatBirthDate(dateStr) {
+    if (!dateStr) return null;
+    return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function stravaLink(rider) {
+    if (!rider.strava_url) return '';
+    return `<a class="strava-link" href="${safeUrl(rider.strava_url)}" target="_blank" rel="noopener noreferrer" title="Strava-Profil" onclick="event.stopPropagation()"><i class="fab fa-strava"></i></a>`;
+}
+
+function teamBadge(rider) {
+    if (!rider.current_team_id) {
+        return `<span class="team-badge muted">kein Team</span>`;
+    }
+    return `<a class="team-badge" href="team.html?id=${encodeURIComponent(rider.current_team_id)}" onclick="event.stopPropagation()">${escapeHtml(rider.current_team_name || rider.current_team_id)}</a>`;
+}
+
+function riderRow(rider) {
+    const searchKey = `${rider.name} ${rider.country || ''} ${rider.current_team_name || ''}`.toLowerCase();
+    return `
+        <tr class="rider-row" data-id="${escapeHtml(rider.id)}" data-search="${escapeHtml(searchKey)}" data-team="${escapeHtml(rider.current_team_id || '')}">
+            <td class="rname">
+                <div class="last">${escapeHtml(rider.last_name || rider.name)}</div>
+                <div class="first">${escapeHtml(rider.first_name || '')}</div>
+            </td>
+            <td class="rcountry">${rider.country ? `<i class="fas fa-flag"></i> ${escapeHtml(rider.country)}` : '–'}</td>
+            <td class="rteam">${teamBadge(rider)}</td>
+            <td class="rstrava">${stravaLink(rider) || '<span class="no-strava">–</span>'}</td>
+        </tr>
+    `;
+}
+
+function renderRidersTable(container, riders, teams) {
+    const teamOptions = [...teams].sort((a, b) => a.name.localeCompare(b.name));
+    container.innerHTML = `
+        <div class="riders-toolbar">
+            <div class="search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" id="rider-search" placeholder="Fahrer, Land oder Team suchen…" autocomplete="off">
+            </div>
+            <select id="rider-team-filter">
+                <option value="">Alle Teams</option>
+                ${teamOptions.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join('')}
+            </select>
+            <span class="riders-count" id="riders-count"></span>
+        </div>
+        <div class="rider-table-wrap">
+            <table class="rider-table">
+                <thead>
+                    <tr>
+                        <th>Fahrer <span class="sort-hint">(sortiert nach Nachname)</span></th>
+                        <th>Land</th>
+                        <th>Team</th>
+                        <th>Strava</th>
+                    </tr>
+                </thead>
+                <tbody id="rider-tbody">${riders.map(riderRow).join('')}</tbody>
+            </table>
+        </div>
+    `;
+
+    const tbody = container.querySelector('#rider-tbody');
+    tbody.querySelectorAll('.rider-row').forEach((row) => {
+        row.addEventListener('click', () => {
+            window.location.href = `rider.html?id=${encodeURIComponent(row.dataset.id)}`;
+        });
+    });
+
+    const searchInput = container.querySelector('#rider-search');
+    const teamFilter = container.querySelector('#rider-team-filter');
+    const countLabel = container.querySelector('#riders-count');
+
+    function applyFilters() {
+        const q = searchInput.value.trim().toLowerCase();
+        const teamId = teamFilter.value;
+        let visible = 0;
+        tbody.querySelectorAll('.rider-row').forEach((row) => {
+            const show = (!q || row.dataset.search.includes(q)) && (!teamId || row.dataset.team === teamId);
+            row.hidden = !show;
+            if (show) visible += 1;
+        });
+        countLabel.textContent = `${visible} von ${riders.length} Fahrern`;
+    }
+
+    searchInput.addEventListener('input', applyFilters);
+    teamFilter.addEventListener('change', applyFilters);
+    applyFilters();
+}
+
+async function initRidersTab(container) {
+    container.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Fahrer…</h3></div>`;
+    try {
+        const [ridersRes, teamsRes] = await Promise.all([Api.getRiders(), Api.getTeams()]);
+        if (ridersRes.error) {
+            container.innerHTML = `<div class="state-panel"><i class="fas fa-database"></i><h3>Fahrer-Datenbank nicht verfügbar</h3><p>${escapeHtml(ridersRes.error)}</p></div>`;
+            return;
+        }
+        const riders = ridersRes.riders || [];
+        if (riders.length === 0) {
+            container.innerHTML = `<div class="state-panel"><i class="fas fa-hourglass-half"></i><h3>Noch keine Fahrer geladen</h3><p>Die Fahrer-Datenbank wird gerade im Hintergrund befüllt - schau in ein paar Minuten wieder vorbei.</p></div>`;
+            return;
+        }
+        renderRidersTable(container, riders, teamsRes.teams || []);
+    } catch (err) {
+        console.error('Fehler beim Laden der Fahrer:', err);
+        container.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>Fahrer konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
+    }
+}
+
+async function renderTeamRoster(container, teamId) {
+    container.innerHTML = `<div class="state-panel small"><i class="fas fa-spinner fa-spin"></i><h3>Lade Kader…</h3></div>`;
+    try {
+        const { riders, error } = await Api.getRiders(teamId);
+        if (error) {
+            container.innerHTML = `<p class="roster-empty">Fahrer-Datenbank nicht verfügbar.</p>`;
+            return;
+        }
+        if (!riders || riders.length === 0) {
+            container.innerHTML = `<p class="roster-empty">Noch kein Kader für dieses Team geladen.</p>`;
+            return;
+        }
+        container.innerHTML = `
+            <div class="roster-grid">
+                ${riders
+                    .map(
+                        (r) => `
+                    <a class="roster-card" href="rider.html?id=${encodeURIComponent(r.id)}">
+                        <div class="rc-avatar">${escapeHtml(riderInitials(r.name))}</div>
+                        <div class="rc-name">
+                            <div class="last">${escapeHtml(r.last_name || r.name)}</div>
+                            <div class="first">${escapeHtml(r.first_name || '')}</div>
+                        </div>
+                        ${r.country ? `<div class="rc-country"><i class="fas fa-flag"></i> ${escapeHtml(r.country)}</div>` : ''}
+                        ${stravaLink(r)}
+                    </a>`
+                    )
+                    .join('')}
+            </div>
+        `;
+    } catch (err) {
+        console.error('Fehler beim Laden des Kaders:', err);
+        container.innerHTML = `<p class="roster-empty">Kader konnte nicht geladen werden.</p>`;
+    }
+}
