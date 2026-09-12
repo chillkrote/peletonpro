@@ -40,6 +40,16 @@ def fetch_section(page: str, section_line_substr: str) -> str:
     raise ValueError(f"Abschnitt mit '{section_line_substr}' nicht gefunden auf Seite '{page}'")
 
 
+def fetch_lead_section(page: str) -> str:
+    """Liefert das gerenderte HTML des Lead-Abschnitts (vor der ersten
+    Überschrift) einer Seite - bei Personen-Artikeln enthält dieser die
+    Infobox. MediaWiki zählt den Lead nicht in der `prop=sections`-Liste
+    (der erste `line`-Eintrag dort ist bereits Abschnitt 1), daher hier
+    direkt `section=0` anfragen statt über fetch_section() zu suchen."""
+    data = _api_get({"action": "parse", "page": page, "prop": "text", "section": 0})
+    return data["parse"]["text"]["*"]
+
+
 def wiki_title_from_url(url: str) -> str:
     """Extrahiert den Wikipedia-Seitentitel aus einer '/wiki/...'-URL, z.B.
     'https://en.wikipedia.org/wiki/2026_Tour_de_France' -> '2026 Tour de France'."""

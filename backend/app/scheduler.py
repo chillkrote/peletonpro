@@ -10,16 +10,20 @@ from datetime import date, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from . import cache
+from . import cache, db
 from .config import (
     REFRESH_INTERVAL_CALENDAR,
     REFRESH_INTERVAL_NEWS,
     REFRESH_INTERVAL_RESULTS,
+    REFRESH_INTERVAL_RIDERS,
     REFRESH_INTERVAL_TEAMS,
+    RIDER_HISTORY_BATCH_SIZE,
 )
-from .models import Race
+from .models import Race, Team
 from .news.rss import fetch_all_news
+from .scrapers.wikipedia import wiki_title_from_url
 from .scrapers.wikipedia_races import fetch_race_calendar, fetch_race_result
+from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team
 from .scrapers.wikipedia_teams import fetch_current_worldteams
 
 logger = logging.getLogger(__name__)
@@ -87,6 +91,69 @@ def refresh_results() -> None:
         cache.mark_error("results", "; ".join(errors))
 
 
+def refresh_riders() -> None:
+    """Baut die (persistente) Fahrer-Datenbank auf: aktuelle Kader aller
+    WorldTeams (schnell, ein Abruf pro Team) sowie Team-Wechsel-Historie für
+    Fahrer, die noch keine haben (langsam, ein Abruf pro Fahrer - daher
+    batchweise über mehrere Job-Läufe verteilt, siehe RIDER_HISTORY_BATCH_SIZE).
+
+    Übersprungen, wenn keine Fahrer-Datenbank konfiguriert ist (DATABASE_URL
+    fehlt, siehe app/db.py) oder noch keine Teams im Cache sind.
+    """
+    if not db.is_configured():
+        logger.info("Fahrer-Refresh übersprungen: keine Fahrer-Datenbank konfiguriert (DATABASE_URL fehlt)")
+        return
+
+    teams_entry = cache.get("teams")
+    teams_data = teams_entry.get("data") if teams_entry else None
+    if not teams_data:
+        logger.info("Fahrer-Refresh übersprungen: noch keine Teams im Cache")
+        return
+
+    teams = [Team(**t) for t in teams_data]
+    for team in teams:
+        try:
+            db.upsert_team(team)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Team-Upsert für '%s' fehlgeschlagen: %s", team.name, exc)
+
+    total_riders = 0
+    for team in teams:
+        try:
+            for rider_id, rider in roster_riders_for_team(team):
+                db.upsert_rider(
+                    rider_id=rider_id,
+                    name=rider.name,
+                    country=rider.country,
+                    birth_date=rider.birth_date,
+                    wiki_url=rider.wiki_url,
+                    current_team_id=team.id,
+                )
+                total_riders += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Kader-Scraping für '%s' fehlgeschlagen: %s", team.name, exc)
+    logger.info("Fahrer-Kader aktualisiert: %d Zuordnungen über %d Teams", total_riders, len(teams))
+
+    pending = db.get_riders_missing_history(limit=RIDER_HISTORY_BATCH_SIZE)
+    fetched = 0
+    for rider_row in pending:
+        try:
+            wiki_title = wiki_title_from_url(rider_row["wiki_url"])
+            history = fetch_rider_history(wiki_title)
+            db.replace_stints(rider_row["id"], history.stints)
+            fetched += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Historie-Scraping für '%s' fehlgeschlagen: %s", rider_row["name"], exc)
+    if pending:
+        remaining = db.get_riders_missing_history_count()
+        logger.info(
+            "Fahrer-Historie geladen: %d/%d in diesem Lauf, noch %d Fahrer ausstehend",
+            fetched,
+            len(pending),
+            remaining,
+        )
+
+
 def refresh_news() -> None:
     try:
         news = fetch_all_news()
@@ -101,6 +168,7 @@ JOBS = [
     (refresh_teams, REFRESH_INTERVAL_TEAMS, "refresh_teams"),
     (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar"),
     (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results"),
+    (refresh_riders, REFRESH_INTERVAL_RIDERS, "refresh_riders"),
     (refresh_news, REFRESH_INTERVAL_NEWS, "refresh_news"),
 ]
 

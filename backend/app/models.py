@@ -76,3 +76,42 @@ class RefreshMeta(BaseModel):
     last_updated: Optional[str] = None
     stale: bool = False
     error: Optional[str] = None
+
+
+class RosterRider(BaseModel):
+    """Ein Fahrer wie er im 'Team roster'-Abschnitt einer Team-Wikipedia-Seite steht."""
+
+    name: str
+    country: Optional[str] = None
+    birth_date: Optional[str] = None
+    wiki_url: str
+
+
+class RiderStint(BaseModel):
+    """Eine Team-Zugehörigkeit eines Fahrers für einen Zeitraum (Jahr(e))."""
+
+    team_name: str
+    team_wiki_url: Optional[str] = None
+    start_year: int
+    end_year: Optional[int] = None
+
+
+class RiderHistory(BaseModel):
+    """Die 'Professional teams'-Historie aus der Infobox eines Fahrer-Wikipedia-Artikels."""
+
+    current_team_wiki_url: Optional[str] = None
+    stints: list[RiderStint] = []
+
+
+class Rider(BaseModel):
+    id: str
+    name: str
+    country: Optional[str] = None
+    birth_date: Optional[str] = None
+    wiki_url: str
+    current_team_id: Optional[str] = None
+    current_team_name: Optional[str] = None
+
+
+class RiderDetail(Rider):
+    history: list[RiderStint] = []
