@@ -46,15 +46,6 @@ def on_startup() -> None:
     except Exception as exc:  # noqa: BLE001 - App darf ohne DB weiterlaufen
         logger.error("Renn-Historie-Schema konnte nicht initialisiert werden: %s", exc)
 
-    # EINMALIGER Fix für den Season-Parser-Bug (siehe db_races.reset_seed_log
-    # Docstring) - wird nach dem bestätigten Neu-Seeding wieder entfernt.
-    try:
-        cleared = db_races.reset_seed_log()
-        if cleared:
-            logger.info("Renn-Historie-Seed-Log zurückgesetzt (Parser-Fix): %d Einträge, wird neu geseedet", cleared)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Renn-Historie-Seed-Log-Reset fehlgeschlagen: %s", exc)
-
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den
     # FastAPI-Startvorgang selbst.

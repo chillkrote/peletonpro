@@ -302,27 +302,49 @@ Etappenzahl, Ergebnisliste (mind. Top 10, sofern Wikipedia das hergibt) und
 bei Mehretagenrennen derselben Angaben pro Etappe.
 
 **Umfang bewusst bei 2020 begonnen, nicht 2010:** World Tour + ProSeries +
-alle 5 Continental Touren seit 2010 wären schätzungsweise 3.000+ Rennen mit
-5.000-10.000+ nötigen Wikipedia-Abrufen gewesen - mehrere Tage
-Hintergrund-Scraping allein für den Erstaufbau. Ab 2020 sind es geschätzt
-1.000-1.500 Rennen. `RACE_HISTORY_START_YEAR` lässt sich jederzeit absenken
-(Umgebungsvariable) - das Seeding ist idempotent
+alle 5 Continental Touren seit 2010 wären schätzungsweise 5.000+ Rennen mit
+weit über 10.000 nötigen Wikipedia-Abrufen gewesen - mehrere Tage
+Hintergrund-Scraping allein für den Erstaufbau. Ab 2020 sind es (verifiziert
+im produktiven Seeding-Lauf, siehe unten) rund 2.000 Rennen - deutlich mehr
+als ursprünglich geschätzt, da die UCI Europe Tour mit ~170-200 Rennen pro
+Saison der mit Abstand größte Circuit ist. `RACE_HISTORY_START_YEAR` lässt
+sich jederzeit absenken (Umgebungsvariable) - das Seeding ist idempotent
 (`race_history_seed_log`), bereits geladene Jahre werden dabei nicht
 erneut angefasst, es kommen nur weitere hinzu.
 
 - **`app/scrapers/wikipedia_race_history.py`** - anders als die übrigen
   Scraper in diesem Projekt NICHT einzeln gegen echte Wikipedia-Antworten
-  verifiziert (bei geschätzt 1.000+ verschiedenen Renn-Artikeln über 7
+  vorab verifiziert (bei geschätzt 1.000+ verschiedenen Renn-Artikeln über 7
   Jahre und 7 Kategorien/Circuits nicht praktikabel vorab durchzuprüfen).
   Stattdessen bewusst defensiv: mehrere Titel-/Abschnitts-Kandidaten
   probieren, alle Parse-Funktionen liefern bei unbekannter Struktur `None`/
-  leere Liste statt einen Fehler zu werfen. Gegen konstruierte HTML-
-  Fixtures (Datum-Parsing inkl. Jahreswechsel, World-Tour- und
-  Continental-Tabellenformat, Infobox, Ergebnis- und Etappen-Übersichts-
-  tabelle) unit-getestet; die tatsächliche Trefferquote über die volle
-  Bandbreite realer Artikel zeigt sich erst im produktiven Lauf (siehe
-  `race_history_seed_log.race_count` und die `results_fetched_at`-Quote
-  als Indikator, ob eine Kombination unerwartet leer/unvollständig blieb).
+  leere Liste statt einen Fehler zu werfen. Die Saison-Tabelle wird
+  spaltennamen- statt positionsbasiert geparst (Renn-Namen-Spalte über
+  Kopfzeilen-Text wie "race"/"event" gesucht, nicht per fester Position -
+  siehe nächster Punkt) und über ALLE Wikitables einer Seite mit
+  erkennbarer Namens-Spalte summiert statt nur eine auszuwählen. Gegen
+  konstruierte HTML-Fixtures (Datum-Parsing inkl. Jahreswechsel,
+  World-Tour- und Continental-Tabellenformat inkl. Multi-Tabellen-Summe,
+  Infobox, Ergebnis- und Etappen-Übersichtstabelle) unit-getestet.
+  **Ein Struktur-Bug wurde bereits im ersten Produktivlauf gefunden und
+  behoben (Stand 2026-09-12):** die ursprüngliche Version nahm an, der
+  Rennname stehe im Zeilenkopf (`<th>`) oder in der ersten `<td>`, und
+  wählte pro Seite nur die EINE größte Tabelle. Das gilt nur für die
+  World-Tour-Kalenderseiten. "2020 UCI Europe Tour" hat die Spalten in der
+  Reihenfolge Date/Race name/... UND verteilt seinen Kalender auf 7-10
+  separate Tabellen (eine pro Zeitraum) statt einer Gesamttabelle; "2020
+  UCI ProSeries" hat die Renn-Spalte erst an fünfter Position. Beides
+  führte zu (gültig abgerufenen, aber leeren) 0-Rennen-Ergebnissen für
+  einzelne Jahr/Kategorie-Kombinationen, die trotzdem als geseedet markiert
+  wurden - gefunden per temporärer Diagnose-Route/Logging gegen die echten
+  Seiten (gleiches Vorgehen wie bei den übrigen Scrapern, siehe unten),
+  behoben durch die jetzige spaltennamen-basierte, summierende Logik.
+  Betraf nicht nur die 0-Fälle: die UCI Europe Tour war dadurch auch in
+  Jahren, die schon vorher ein plausibles Ergebnis lieferten, um das
+  5-6-fache unterzählt (eine einzelne Tabelle statt aller ~7-10). Ob
+  weitere, bisher unbemerkte Kombinationen ähnlich betroffen sind, zeigt
+  sich am ehesten an ungewöhnlich niedrigen `race_history_seed_log.race_count`-
+  Werten im Vergleich zu benachbarten Jahren.
 - **Zwei Scheduler-Phasen** (`scheduler.refresh_race_history`, läuft alle
   `REFRESH_INTERVAL_RACE_HISTORY` Sekunden, Default 3 Min):
   1. *Seeding*: pro (Kategorie, Circuit, Saison), die noch nicht versucht

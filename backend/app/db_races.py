@@ -125,23 +125,6 @@ def race_id_for(season: int, category: str, name: str, circuit: Optional[str] = 
 # ---------------------------------------------------------------------------
 
 
-def reset_seed_log() -> int:
-    """EINMALIGER Fix (siehe backend/README.md, Renn-Historie-Abschnitt):
-    der ursprüngliche Seeding-Parser wählte pro Seite nur die EINE größte
-    Wikitable statt über alle Tabellen mit erkennbarer Renn-Namen-Spalte zu
-    summieren - stark frequentierte Circuits (v.a. UCI Europe Tour, die
-    ihren Kalender auf mehrere Tabellen verteilen) lieferten dadurch 0
-    Rennen, die trotzdem als "geseedet" markiert wurden. Leert den kompletten
-    Seed-Log, damit der nächste refresh_race_history-Lauf mit dem
-    korrigierten Parser (spaltennamen- statt positionsbasiert, summiert
-    über alle Tabellen) alles neu seedet - günstig und idempotent
-    (upsert_race_skeleton), da nur die Saison-Übersichtsseiten erneut
-    abgerufen werden, nicht die teuren Einzel-Renn-Details."""
-    with _connect() as conn:
-        cur = conn.execute("DELETE FROM race_history_seed_log")
-        return cur.rowcount
-
-
 def is_season_seeded(category: str, season: int, circuit: Optional[str] = None) -> bool:
     with _connect() as conn:
         row = conn.execute(
