@@ -3,8 +3,9 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import db
 from .config import CORS_ORIGINS
-from .routers import news, races, results, teams
+from .routers import news, races, results, riders, teams
 from .scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +23,7 @@ app.add_middleware(
 app.include_router(teams.router)
 app.include_router(races.router)
 app.include_router(results.router)
+app.include_router(riders.router)
 app.include_router(news.router)
 
 
@@ -32,6 +34,11 @@ def health():
 
 @app.on_event("startup")
 def on_startup() -> None:
+    try:
+        db.init_schema()
+    except Exception as exc:  # noqa: BLE001 - App darf ohne DB weiterlaufen
+        logger.error("Fahrer-Datenbank-Schema konnte nicht initialisiert werden: %s", exc)
+
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den
     # FastAPI-Startvorgang selbst.

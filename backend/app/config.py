@@ -43,6 +43,14 @@ REFRESH_INTERVAL_CALENDAR = int(os.environ.get("REFRESH_INTERVAL_CALENDAR", str(
 REFRESH_INTERVAL_RESULTS = int(os.environ.get("REFRESH_INTERVAL_RESULTS", str(60 * 60)))
 REFRESH_INTERVAL_NEWS = int(os.environ.get("REFRESH_INTERVAL_NEWS", str(15 * 60)))
 
+# Fahrer-Datenbank: läuft häufiger als die anderen Jobs, weil sie beim
+# ersten Befüllen der (persistenten) Datenbank batchweise durch alle
+# Fahrer ohne Historie arbeitet (siehe scheduler.refresh_riders). Ist die
+# Datenbank einmal vollständig, wird jeder Lauf sehr billig (kein
+# Rückstand mehr abzuarbeiten), daher schadet das kurze Intervall nicht.
+REFRESH_INTERVAL_RIDERS = int(os.environ.get("REFRESH_INTERVAL_RIDERS", str(3 * 60)))
+RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
+
 CACHE_DIR = os.environ.get(
     "CACHE_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 )

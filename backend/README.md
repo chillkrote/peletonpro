@@ -147,6 +147,64 @@ Bot-Erkennung scheitern könnte. uci.org wird daher **nicht** als
 Datenquelle verwendet - stattdessen wird Wikipedia genutzt, siehe
 "Datenquelle: Wikipedia" oben.
 
+## Fahrer-Datenbank (Teams <-> Fahrer, Team-Wechsel-Historie)
+
+Zusätzlich zum flüchtigen JSON-Cache gibt es eine **persistente Postgres-
+Datenbank** (`app/db.py`) für Fahrer und deren Team-Zugehörigkeit über die
+Jahre. Grund für die echte Persistenz (anders als bei Teams/Rennen/News):
+ein vollständiger Rebuild aller ~500 Fahrer-Historien (ein
+Wikipedia-Abruf pro Fahrer, respektvoll ratenlimitiert) dauert 15-20
+Minuten - das soll nicht nach jedem Render-Neustart (Deploy, Aufwachen aus
+dem Schlafmodus) erneut passieren, wie es beim flüchtigen Cache der Fall
+wäre.
+
+- **`app/scrapers/wikipedia_riders.py`** - VERIFIZIERT (Stand 2026-09-12).
+  - Kader: Team-Wikipedia-Seite, Abschnitt mit "roster" im Namen (i.d.R.
+    "Team roster") - ein oder zwei nebeneinander stehende Tabellen. Statt
+    uns auf Spalten-/Colspan-Zählung zu verlassen (variiert leicht
+    zwischen Teams), wird pro Zeile der erste Fahrer-Link mit Text sowie
+    das Geburtsdatum über die hCard-Klasse `span.bday` gesucht.
+  - Historie: Infobox im Lead-Abschnitt (`section=0`, wird von
+    `prop=sections` nicht mitgezählt, daher ein eigener
+    `fetch_lead_section()`-Helfer statt `fetch_section()`) jedes
+    Fahrer-Artikels. Block "Professional teams" mit einer Zeile pro
+    Zeitraum (z.B. "2017–2018" -> "Rog–Ljubljana", "2019–" -> aktuelles,
+    noch laufendes Team). Separates Feld "Current team" liefert zusätzlich
+    den Link auf die aktuelle Team-Seite.
+- **`app/db.py`** - Schema (`teams`, `riders`, `rider_team_stints`) +
+  Zugriffsfunktionen. `is_configured()` prüft, ob `DATABASE_URL` gesetzt
+  ist; ohne sie bleiben `/api/riders*` leer/deaktiviert, der Rest der App
+  läuft unverändert weiter.
+- **`scheduler.refresh_riders`** - läuft alle `REFRESH_INTERVAL_RIDERS`
+  Sekunden (Default 3 Min): aktualisiert zuerst die Kader aller aktuellen
+  Teams (schnell, ein Abruf pro Team), holt danach die volle Historie für
+  bis zu `RIDER_HISTORY_BATCH_SIZE` Fahrer (Default 30), die noch keine
+  haben (`history_fetched_at IS NULL`) - verteilt die ~500 nötigen Abrufe
+  also über mehrere Läufe statt eines einzigen ~20-minütigen Blocks. Ist
+  die Datenbank einmal vollständig befüllt, wird jeder Lauf günstig (kein
+  Rückstand mehr), das kurze Intervall schadet dann nicht mehr.
+- Ein Fahrer, der ein Team verlässt (Karriereende, Wechsel ohne dass das
+  neue Team schon im aktuellen Kader-Scrape auftaucht), behält bis zum
+  nächsten erfolgreichen Kader-Abgleich sein zuletzt bekanntes
+  `current_team_id` - kein Cross-Check über alle Teams hinweg, um
+  fälschlich "verwaiste" Fahrer zu erkennen. Bekannte Einschränkung,
+  aktuell nicht behoben.
+
+**Render-Postgres-Free-Tier-Hinweis:** die kostenlose Datenbank läuft nach
+30 Tagen ab (`expiresAt` bei Erstellung) und wird dann von Render gelöscht,
+sofern sie nicht vorher auf einen bezahlten Plan angehoben wird. Rechtzeitig
+vor Ablauf upgraden oder die Datenbank neu erstellen (Daten gehen dabei
+verloren, bauen sich aber automatisch binnen ~20 Minuten wieder auf).
+
+So testet man die Parser ohne Netzwerkzugriff gegen gespeichertes HTML:
+
+```python
+from app.scrapers.wikipedia_riders import parse_team_roster, parse_rider_history
+
+roster = parse_team_roster(open("roster_section.html", encoding="utf-8").read())
+history = parse_rider_history(open("rider_infobox.html", encoding="utf-8").read())
+```
+
 ## Lokal starten
 
 ```bash
@@ -193,10 +251,17 @@ API läuft dann unter `http://localhost:8001`, z.B.
 | `GET /api/calendar` | Kalenderansicht (ein Eintrag pro Rennstart) |
 | `GET /api/results?status=live\|finished\|upcoming` | (Live-)Ergebnisse |
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
+| `GET /api/riders?team=<team_id>` | Fahrer, optional nach aktuellem Team gefiltert |
+| `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (Team-Wechsel-Liste) |
 | `GET /api/health` | Health-Check |
 
 Da die Teams-Quelle (Wikipedia) nur WorldTeams abdeckt, liefert
 `category=pro` und `category=cont` aktuell immer eine leere Liste.
+
+Die `/api/riders*`-Endpunkte liefern `{"riders": [], "error": "..."}` bzw.
+HTTP 503, solange `DATABASE_URL` nicht gesetzt ist (siehe "Fahrer-
+Datenbank" oben) - kein `last_updated`, da sie nicht über den Cache-
+Mechanismus laufen.
 
 Jede Antwort enthält zusätzlich `last_updated` (ISO-Timestamp des letzten
 erfolgreichen Scraping-Laufs) und `error` (Fehlermeldung des letzten
