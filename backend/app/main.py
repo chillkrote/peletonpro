@@ -62,22 +62,14 @@ def _wiki_probe() -> None:
     Abschnitten und Fahrer-Infoboxen (Team-Historie) auf Wikipedia, um
     Machbarkeit einer Fahrer/Team-Datenbank mit Wechsel-Historie zu klären."""
     try:
-        result = _wiki_get({"action": "parse", "page": "UAE Team Emirates XRG", "prop": "sections"})
-        sections = result["json"].get("parse", {}).get("sections", [])
-        logger.info("Wiki-Probe 'UAE Team Emirates XRG' sections=%s", [s.get("line") for s in sections])
-        for candidate in ("Roster", "Team roster", "Current roster", "Riders"):
-            try:
-                _log_section("UAE Team Emirates XRG", candidate)
-            except Exception:
-                pass
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Wiki-Probe Team-Roster fehlgeschlagen: %s", exc)
-
-    try:
         html_result = _wiki_get({"action": "parse", "page": "Tadej Pogačar", "prop": "text", "section": 0})
         html = html_result["json"].get("parse", {}).get("text", {}).get("*", "")
         flat = " ".join(html.split())
-        logger.info("Wiki-Probe 'Tadej Pogačar' infobox (section 0) len=%d snippet=%s", len(flat), flat[:6000])
+        logger.info("Wiki-Probe 'Tadej Pogačar' infobox len=%d", len(flat))
+        for marker in ("Team information", "Current team", "Teams", "Discipline"):
+            pos = flat.find(marker)
+            if pos != -1:
+                logger.info("Wiki-Probe 'Tadej Pogačar' around '%s': %s", marker, flat[max(0, pos - 50):pos + 2500])
     except Exception as exc:  # noqa: BLE001
         logger.warning("Wiki-Probe Fahrer-Infobox fehlgeschlagen: %s", exc)
 
