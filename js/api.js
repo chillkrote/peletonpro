@@ -61,4 +61,16 @@ const Api = {
     getRider(id) {
         return apiGet(`/api/riders/${encodeURIComponent(id)}`);
     },
+    getRaceHistory({ season, category, circuit, limit = 3000, offset = 0 } = {}) {
+        const params = new URLSearchParams();
+        if (season) params.set('season', season);
+        if (category) params.set('category', category);
+        if (circuit) params.set('circuit', circuit);
+        params.set('limit', limit);
+        params.set('offset', offset);
+        return apiGet(`/api/race-history?${params.toString()}`);
+    },
+    getRaceHistoryDetail(id) {
+        return apiGet(`/api/race-history/${encodeURIComponent(id)}`);
+    },
 };

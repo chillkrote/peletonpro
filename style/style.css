@@ -259,6 +259,32 @@ img { max-width: 100%; }
 .race-results-panel .pos { width: 36px; font-weight: 800; color: var(--secondary-light); }
 .race-results-panel .team-name { color: var(--text-muted); }
 
+.race-panel-links {
+    background: var(--card); border: 1px solid var(--border); border-top: none;
+    padding: 10px 20px; display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+}
+.race-panel-links a { color: var(--secondary-light); text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.race-panel-links a:hover { text-decoration: underline; }
+.race-panel-links .sep { color: var(--text-faint); }
+.race-panel-empty {
+    background: var(--card); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius);
+    padding: 16px 20px; color: var(--text-muted); font-size: 13.5px; margin: 0;
+}
+.results-caption {
+    background: var(--card); border: 1px solid var(--border); border-top: none; border-bottom: none;
+    padding: 10px 20px; font-family: var(--font-head); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-faint);
+}
+.stage-breakdown {
+    background: var(--card); border: 1px solid var(--border); border-top: none; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden;
+}
+.stage-row { display: flex; align-items: center; gap: 16px; padding: 9px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.stage-row:last-child { border-bottom: none; }
+.stage-row .stage-num { width: 26px; flex-shrink: 0; font-weight: 800; color: var(--secondary-light); font-family: var(--font-head); }
+.stage-row .stage-meta { flex: 1; color: var(--text-muted); min-width: 0; }
+.stage-row .stage-winner { flex-shrink: 0; font-weight: 600; white-space: nowrap; }
+.stage-row .stage-winner.muted { color: var(--text-faint); font-weight: 400; font-style: italic; }
+.stage-row .stage-winner i { color: var(--secondary-light); margin-right: 4px; }
+
 /* ---------------------------------------------------------------------- *
  * Teams
  * ---------------------------------------------------------------------- */
@@ -530,4 +556,8 @@ img { max-width: 100%; }
     .rider-table th .sort-hint { display: none; }
     .rider-table th, .rider-table td { padding: 10px 12px; }
     .stints-list li { flex-wrap: wrap; }
+    #season-tabs { justify-content: flex-start; overflow-x: auto; flex-wrap: nowrap; }
+    #season-tabs button { flex-shrink: 0; }
+    .stage-row { flex-wrap: wrap; }
+    .stage-row .stage-num { width: auto; }
 }

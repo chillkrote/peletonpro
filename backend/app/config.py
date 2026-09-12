@@ -56,6 +56,24 @@ RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
 # Batch (bis zu 50 Titel) nur 2 Requests nötig sind statt einem pro Fahrer.
 STRAVA_BATCH_SIZE = int(os.environ.get("STRAVA_BATCH_SIZE", "50"))
 
+# Renn-Historie (WorldTour/ProSeries/Continental seit RACE_HISTORY_START_YEAR,
+# siehe app/db_races.py + scrapers/wikipedia_race_history.py): geschätzt
+# 1.000-1.500 Rennen (Stand Startjahr 2020), jedes mit mind. einem eigenen
+# Wikipedia-Abruf - das dauert (respektvoll ratenlimitiert) mehrere Stunden
+# bis Tage, daher kleine Batches pro Lauf, ähnlich wie bei der Fahrer-
+# Historie. Reihenfolge: World Tour + ProSeries zuerst (kleiner,
+# wichtiger), Continental Touren laufen danach nach - siehe
+# scheduler.refresh_race_history/get_races_missing_details.
+#
+# RACE_HISTORY_START_YEAR bewusst als Konfigurationswert (nicht hart
+# codiert): das Seeding pro Jahr ist idempotent (race_history_seed_log) -
+# den Wert später abzusenken (z.B. auf 2010) holt automatisch weitere
+# Jahre nach, ohne bereits vorhandene Daten anzurühren.
+REFRESH_INTERVAL_RACE_HISTORY = int(os.environ.get("REFRESH_INTERVAL_RACE_HISTORY", str(3 * 60)))
+RACE_HISTORY_START_YEAR = int(os.environ.get("RACE_HISTORY_START_YEAR", "2020"))
+RACE_HISTORY_DETAIL_BATCH_SIZE = int(os.environ.get("RACE_HISTORY_DETAIL_BATCH_SIZE", "15"))
+RACE_HISTORY_CIRCUITS = ("africa", "asia", "europe", "america", "oceania")
+
 CACHE_DIR = os.environ.get(
     "CACHE_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 )
