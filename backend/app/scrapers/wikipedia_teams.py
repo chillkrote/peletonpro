@@ -25,17 +25,13 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import Team
+from ..text import slugify
 from .wikipedia import fetch_page_images, fetch_section, wiki_title_from_url
 
 logger = logging.getLogger(__name__)
 
 WORLDTEAMS_PAGE = "UCI World Tour"
 WORLDTEAMS_SECTION = "current uci worldteams"
-
-
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "unknown"
 
 
 def _country_from_cell(cell) -> str:
@@ -64,13 +60,11 @@ def _parse_team_row(row) -> Team | None:
     country = _country_from_cell(cells[1])
 
     return Team(
-        id=_slugify(name),
+        id=slugify(name),
         name=name,
         category="wt",
         country=country or "?",
-        code=_slugify(name)[:3].upper(),
-        riders=None,
-        website=None,
+        code=slugify(name)[:3].upper(),
         source_url=f"https://en.wikipedia.org/wiki/{wiki_title}",
     )
 

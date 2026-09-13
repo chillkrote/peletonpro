@@ -11,7 +11,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from . import db, db_races
 from .config import CORS_ORIGINS, REQUIRE_DATABASE
-from .routers import export, news, race_history, races, results, riders, teams
+from .routers import export, news, race_history, riders, teams
 from .ratelimit import limiter
 from .routers.messages import INTERNAL_ERROR
 from .scheduler import start_scheduler
@@ -186,8 +186,6 @@ app.add_middleware(
 )
 
 app.include_router(teams.router)
-app.include_router(races.router)
-app.include_router(results.router)
 app.include_router(riders.router)
 app.include_router(race_history.router)
 app.include_router(export.router)

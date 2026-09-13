@@ -15,72 +15,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    content.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Team…</h3></div>`;
+    content.innerHTML = loadingPanel('Lade Team…');
     try {
-        const [teamsRes, racesRes, resultsRes] = await Promise.all([Api.getTeams(), Api.getRaces(), Api.getResults()]);
-        const team = (teamsRes.teams || []).find((t) => t.id === teamId);
-        if (!team) {
-            content.innerHTML = errorPanel('Dieses Team wurde nicht gefunden.');
-            return;
-        }
-        renderTeam(content, team, racesRes.races || [], resultsRes.results || []);
+        // Das Team kommt über GET /api/teams/{id} - vorher wurde die
+        // komplette Team-Liste geholt und darin mit find() gesucht.
+        // Statistik und Siege kommen aus der Renn-Historie-Datenbank (ein
+        // Aufruf, Aggregation per GROUP BY im Backend) statt aus dem
+        // flüchtigen Cache mit Berechnung im Browser.
+        const [team, statsRes] = await Promise.all([
+            Api.getTeam(teamId),
+            Api.getTeamStats(teamId).catch(() => null),
+        ]);
+        renderTeam(content, team, statsRes);
         renderTeamRoster(document.getElementById('team-roster'), teamId);
     } catch (err) {
+        // 404 vom Backend heißt: diese Team-ID gibt es nicht. Alles andere
+        // ist ein Fehler auf unserer Seite - beides soll der Besucher
+        // unterschiedlich lesen können.
         console.error('Fehler beim Laden des Teams:', err);
-        content.innerHTML = errorPanel('Team konnte nicht geladen werden.');
+        content.innerHTML = err && err.status === 404
+            ? errorPanel('Dieses Team wurde nicht gefunden.')
+            : errorPanel('Team konnte nicht geladen werden.', 'Bitte später erneut versuchen.');
     }
 });
 
-function errorPanel(text) {
-    return `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>${escapeHtml(text)}</h3></div>`;
-}
 
-function initials(name) {
-    return name
-        .split(/[\s–-]+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((word) => word[0])
-        .join('')
-        .toUpperCase();
-}
-
-function formatDate(dateStr) {
-    return formatCalendarDate(dateStr, { day: '2-digit', month: 'long', year: 'numeric' });
-}
-
-function computeStats(team, results) {
-    let wins = 0;
-    let podiums = 0;
-    let topTen = 0;
-    results.forEach((result) => {
-        const idx = (result.results || []).findIndex((r) => r.team === team.name);
-        if (idx === -1) return;
-        topTen += 1;
-        if (idx === 0) wins += 1;
-        if (idx <= 2) podiums += 1;
-    });
-    return { wins, podiums, topTen };
-}
-
-function renderTeam(container, team, races, results) {
+function renderTeam(container, team, statsRes) {
     document.title = `${team.name} – PelotonPro`;
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: team.name }] });
 
-    const racesById = Object.fromEntries(races.map((r) => [r.id, r]));
-    const stats = computeStats(team, results);
-
-    const wins = results
-        .map((result) => ({ result, winner: (result.results || [])[0] }))
-        .filter((entry) => entry.winner && entry.winner.team === team.name)
-        .map((entry) => ({ race: racesById[entry.result.race_id], rider: entry.winner.rider }))
-        .filter((entry) => entry.race)
-        .sort((a, b) => b.race.start_date.localeCompare(a.race.start_date));
+    const stats = (statsRes && statsRes.stats) || { wins: 0, podiums: 0, top_ten: 0, races: 0 };
+    const wins = (statsRes && statsRes.wins) || [];
+    const season = (statsRes && statsRes.season) || new Date().getFullYear();
 
     container.innerHTML = `
         <div class="team-banner">
             <div class="logo-circle-lg">
-                ${team.logo ? `<img src="${safeUrl(team.logo)}" alt="" onerror="this.parentElement.textContent='${escapeHtml(initials(team.name))}';">` : escapeHtml(initials(team.name))}
+                ${team.logo ? `<img src="${safeUrl(team.logo)}" alt="" onerror="this.parentElement.textContent='${escapeHtml(teamInitials(team.name))}';">` : escapeHtml(teamInitials(team.name))}
             </div>
             <div>
                 <h1>${escapeHtml(team.name)}</h1>
@@ -94,13 +65,13 @@ function renderTeam(container, team, races, results) {
         </div>
 
         <div class="stats-row">
-            <div class="stat-card"><div class="val">${stats.wins}</div><div class="lbl">Saisonsiege</div></div>
+            <div class="stat-card"><div class="val">${stats.wins}</div><div class="lbl">Siege</div></div>
             <div class="stat-card"><div class="val">${stats.podiums}</div><div class="lbl">Podestplätze</div></div>
-            <div class="stat-card"><div class="val">${stats.topTen}</div><div class="lbl">Top-10-Platzierungen</div></div>
+            <div class="stat-card"><div class="val">${stats.top_ten}</div><div class="lbl">Top-10-Platzierungen</div></div>
         </div>
 
         <div class="team-wins-wrap">
-            <h2>Saisonsiege 2026</h2>
+            <h2>Siege ${season}</h2>
             ${
                 wins.length > 0
                     ? wins
@@ -109,13 +80,17 @@ function renderTeam(container, team, races, results) {
                 <a class="win-row" href="races.html">
                     <i class="fas fa-trophy trophy"></i>
                     <div>
-                        <div class="wr-name">${escapeHtml(w.race.name)}</div>
-                        <div class="wr-meta">${escapeHtml(w.rider)} · ${formatDate(w.race.start_date)}</div>
+                        <div class="wr-name">${escapeHtml(w.race_name)}${
+                            w.stage_number ? ` <span class="wr-stage">Etappe ${w.stage_number}</span>` : ''
+                        }</div>
+                        <div class="wr-meta">${escapeHtml(w.rider)}${
+                            w.start_date ? ` · ${formatCalendarDate(w.start_date, { day: '2-digit', month: 'long', year: 'numeric' })}` : ''
+                        }</div>
                     </div>
                 </a>`
                           )
                           .join('')
-                    : `<p style="color:var(--text-muted);font-size:14px">Noch keine Saisonsiege erfasst.</p>`
+                    : `<p style="color:var(--text-muted);font-size:14px">Noch keine Siege erfasst.</p>`
             }
         </div>
 

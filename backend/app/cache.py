@@ -1,10 +1,40 @@
-"""Einfacher In-Memory-Cache mit JSON-Datei-Persistenz.
+"""Einfacher In-Memory-Cache mit JSON-Datei-Persistenz. Nur noch für News.
 
-Jeder Schlüssel (z.B. "teams", "news") wird sowohl im Speicher als auch als
-JSON-Datei unter CACHE_DIR gehalten. Persistenz sorgt dafür, dass nach einem
-Neustart des Backends nicht sofort wieder gescraped werden muss und dass bei
-einem fehlschlagenden Scraping-Lauf der letzte funktionierende Stand
-weiterhin ausgeliefert wird, statt die API mit einem Fehler zu beantworten.
+Jeder Schlüssel wird sowohl im Speicher als auch als JSON-Datei unter
+CACHE_DIR gehalten. Bei einem fehlschlagenden Scraping-Lauf wird der letzte
+funktionierende Stand weiter ausgeliefert, statt die API mit einem Fehler zu
+beantworten (siehe set()).
+
+WARUM NUR NOCH NEWS
+-------------------
+Der Cache hatte zwei Schlüssel: "teams" und "news". Die Teams lagen damit
+doppelt - einmal hier als JSON-Datei, einmal in der Postgres-Tabelle
+`teams`, in die derselbe Scraper-Lauf sie ebenfalls schrieb. Die Tabelle
+ist die richtige Quelle (sie hat Fremdschlüssel von riders und
+rider_stints, sie übersteht Deploys, und sie wächst mit weiteren Teams),
+also liest /api/teams jetzt von dort. Siehe db.get_teams.
+
+News bleiben hier, und das ist eine Entscheidung, keine Auslassung:
+
+- News sind ein flacher RSS-Auszug von ~20 Einträgen, auf den nichts
+  verweist und den nichts joint. Eine Tabelle dafür bräuchte Schema,
+  Migration und eine Aufräumregel für alte Einträge - Aufwand ohne
+  Gegenwert.
+- Sie sind das Einzige, was die Seite noch ohne Datenbank anzeigen kann.
+  Das ist beim Debuggen nützlich.
+- Verlorene News sind kein Datenverlust. Der RSS-Feed ist die Quelle und
+  liefert sie beim nächsten Lauf (REFRESH_INTERVAL_NEWS, Default 30 min)
+  wieder.
+
+GRENZE DER PERSISTENZ
+---------------------
+Auf Renders Free-Plan ist das Dateisystem flüchtig: die JSON-Datei ist
+nach jedem Deploy und nach jedem Aufwachen aus dem Schlafmodus (nach 15
+Minuten ohne Request) weg. Wirksam ist dort also nur der
+In-Memory-Anteil. Praktisch heißt das: der erste Request nach einem Deploy
+sieht eine leere News-Liste, bis der erste Scheduler-Lauf durch ist (er
+startet sofort beim Hochfahren). Wer sich auf die Datei verlässt, verlässt
+sich auf nichts - deshalb steht das hier und nicht im Verborgenen.
 """
 import json
 import logging

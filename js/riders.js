@@ -5,16 +5,6 @@
 // Darstellung (Initialen, Geburtsdatum, Strava-Link, Team-Badge) überall
 // gleich aussieht.
 
-function riderInitials(name) {
-    return (name || '')
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((w) => w[0])
-        .join('')
-        .toUpperCase();
-}
-
 function formatBirthDate(dateStr) {
     return formatCalendarDate(dateStr) || null;
 }
@@ -103,28 +93,47 @@ function renderRidersTable(container, riders, teams) {
     applyFilters();
 }
 
+// Holt ALLE Fahrer und blättert dabei über offset weiter. Vorher ein
+// einzelner Aufruf ohne limit: das Backend liefert dann seine Obergrenze
+// (1000 Zeilen) und die Liste war ab dem 1001. Fahrer stillschweigend
+// abgeschnitten - keine Meldung, kein Hinweis, nur fehlende Fahrer. Bei
+// ~500 WorldTour-Fahrern fiel das nicht auf; mit dem Frauen-Radsport oder
+// weiteren Kategorien schon. Dasselbe Muster wie js/races.js::loadSeason.
+async function loadAllRiders() {
+    const riders = [];
+    let offset = 0;
+    for (;;) {
+        const res = await Api.getRiders(null, { offset });
+        if (res.error) return { riders, error: res.error };
+        riders.push(...(res.riders || []));
+        offset += res.limit;
+        if (riders.length >= res.total || !(res.riders || []).length) break;
+    }
+    return { riders, error: null };
+}
+
 async function initRidersTab(container) {
-    container.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Fahrer…</h3></div>`;
+    container.innerHTML = loadingPanel('Lade Fahrer…');
     try {
-        const [ridersRes, teamsRes] = await Promise.all([Api.getRiders(), Api.getTeams()]);
+        const [ridersRes, teamsRes] = await Promise.all([loadAllRiders(), Api.getTeams()]);
         if (ridersRes.error) {
-            container.innerHTML = `<div class="state-panel"><i class="fas fa-database"></i><h3>Fahrer-Datenbank nicht verfügbar</h3><p>${escapeHtml(ridersRes.error)}</p></div>`;
+            container.innerHTML = statePanel('fas fa-database', 'Fahrer-Datenbank nicht verfügbar', ridersRes.error);
             return;
         }
         const riders = ridersRes.riders || [];
         if (riders.length === 0) {
-            container.innerHTML = `<div class="state-panel"><i class="fas fa-hourglass-half"></i><h3>Noch keine Fahrer geladen</h3><p>Die Fahrer-Datenbank wird gerade im Hintergrund befüllt - schau in ein paar Minuten wieder vorbei.</p></div>`;
+            container.innerHTML = pendingPanel('Noch keine Fahrer geladen', 'Die Fahrer-Datenbank');
             return;
         }
         renderRidersTable(container, riders, teamsRes.teams || []);
     } catch (err) {
         console.error('Fehler beim Laden der Fahrer:', err);
-        container.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>Fahrer konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
+        container.innerHTML = errorPanel('Fahrer konnten nicht geladen werden.', 'Bitte später erneut versuchen.');
     }
 }
 
 async function renderTeamRoster(container, teamId) {
-    container.innerHTML = `<div class="state-panel small"><i class="fas fa-spinner fa-spin"></i><h3>Lade Kader…</h3></div>`;
+    container.innerHTML = statePanel('fas fa-spinner fa-spin', 'Lade Kader…', null, 'state-panel small');
     try {
         const { riders, error } = await Api.getRiders(teamId);
         if (error) {
