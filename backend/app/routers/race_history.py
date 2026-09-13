@@ -1,7 +1,7 @@
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from .. import db, db_races
 from ..ratelimit import RATE_LIMIT_RACE_DETAIL, limiter
@@ -72,10 +72,23 @@ def list_seasons():
 
 @router.get("/{race_id}")
 # Strenger als der Default: ein Aufruf löst mehrere Abfragen aus (Rennen,
-# Gesamt-Ergebnis, Etappen, Etappen-Ergebnisse). slowapi braucht dafür den
-# Request-Parameter, auch wenn die Funktion ihn selbst nicht benutzt.
+# Gesamt-Ergebnis, Etappen, Etappen-Ergebnisse).
+#
+# Die beiden Parameter `request` und `response` braucht slowapi, nicht diese
+# Funktion. `request` ist die Quelle für den Zähler-Schlüssel (die Client-IP,
+# siehe app/ratelimit.py). `response` ist die Stelle, an die slowapi die
+# X-RateLimit-Header schreibt: Weil ratelimit.py mit headers_enabled=True
+# arbeitet, ruft slowapi nach jedem Aufruf _inject_headers() auf, und wenn
+# die Funktion keine Response zurückgibt (hier: ein dict) holt es sich das
+# Objekt aus dem response-Parameter. Fehlt der, wirft slowapi selbst eine
+# Exception und der Endpunkt antwortet mit 500 statt mit dem Rennen - egal
+# ob die Grenze erreicht ist oder nicht. Genau das war hier der Fall
+# (nachgemessen: 500 auf jeden Aufruf von /api/race-history/{id}).
+#
+# Endpunkte, die eine Response zurückgeben (die CSV-Exporte mit ihrer
+# StreamingResponse), brauchen den Parameter deshalb nicht.
 @limiter.limit(RATE_LIMIT_RACE_DETAIL)
-def get_race(request: Request, race_id: str):
+def get_race(request: Request, response: Response, race_id: str):
     """Ein Rennen inkl. Gesamt-/Eintagesrennen-Ergebnis (`results`) und bei
     Mehretagenrennen der kompletten Etappenliste inkl. je Etappe eigener
     Ergebnisliste (`stages[].results`)."""

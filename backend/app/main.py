@@ -1,7 +1,8 @@
+import inspect
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
@@ -35,6 +36,8 @@ def _check_ratelimit_coverage(app: FastAPI) -> None:
     FastAPI-Upgrade würde das Rate Limiting also lautlos abschalten.
 
     Diese Prüfung macht daraus eine sichtbare Warnung beim Start."""
+    _check_ratelimit_headers(app)
+
     opaque = [r for r in app.routes if not hasattr(r, "endpoint")]
     if opaque:
         logger.warning(
@@ -48,6 +51,65 @@ def _check_ratelimit_coverage(app: FastAPI) -> None:
         )
     else:
         logger.info("Rate Limiting: %d Routen auflösbar", len(app.routes))
+
+
+def _check_ratelimit_headers(app: FastAPI) -> None:
+    """Prüft, dass jeder mit @limiter.limit gedrosselte Endpunkt die
+    X-RateLimit-Header überhaupt setzen kann.
+
+    Weil ratelimit.py mit headers_enabled=True arbeitet, ruft slowapi nach
+    jedem Aufruf _inject_headers() auf. Gibt der Endpunkt keine Response
+    zurück (sondern z.B. ein dict), holt slowapi das Objekt aus einem
+    Parameter namens `response` - und wirft, wenn es den nicht gibt. Der
+    Endpunkt antwortet dann mit 500, und zwar auf JEDEN Aufruf, nicht erst
+    wenn die Grenze erreicht ist.
+
+    Das ist genau einmal passiert: /api/race-history/{race_id} war nach dem
+    Einbau von headers_enabled durchgehend kaputt, ohne dass irgendwo eine
+    Warnung stand - die Drosselung selbst funktionierte ja. Ein 500 beim
+    Aufklappen eines Rennens ist von außen nicht von einem DB-Problem zu
+    unterscheiden. Deshalb diese Prüfung.
+
+    Sie liest slowapis internes _exempt_routes (Endpunkte mit
+    @limiter.exempt, etwa /api/health). Das ist ein privates Attribut -
+    falls eine künftige slowapi-Version es umbenennt, soll die Prüfung
+    nichts kaputt machen, deshalb der try-Block."""
+    try:
+        exempt = set(getattr(limiter, "_exempt_routes", ()))
+    except Exception:  # noqa: BLE001
+        logger.warning("Rate-Limit-Header-Prüfung übersprungen: slowapi-Interna geändert")
+        return
+
+    verdaechtig: list[str] = []
+    for route in app.routes:
+        endpoint = getattr(route, "endpoint", None)
+        if endpoint is None:
+            continue
+        if f"{endpoint.__module__}.{endpoint.__name__}" in exempt:
+            continue
+        if not hasattr(endpoint, "__wrapped__"):
+            continue  # nicht per Dekorator gedrosselt
+        signature = inspect.signature(endpoint)
+        hat_response_parameter = any(
+            p.annotation is Response for p in signature.parameters.values()
+        )
+        gibt_response_zurueck = (
+            inspect.isclass(signature.return_annotation)
+            and issubclass(signature.return_annotation, Response)
+        )
+        if not (hat_response_parameter or gibt_response_zurueck):
+            verdaechtig.append(f"{route.path} ({endpoint.__name__})")
+
+    if verdaechtig:
+        logger.error(
+            "Diese gedrosselten Endpunkte antworten vermutlich mit 500: %s. "
+            "Sie brauchen einen Parameter `response: Response` (dahin schreibt "
+            "slowapi die X-RateLimit-Header) oder eine Rückgabe-Annotation, "
+            "die eine Response ist.",
+            ", ".join(verdaechtig),
+        )
+    else:
+        logger.info("Rate-Limit-Header: alle gedrosselten Endpunkte können sie setzen")
 
 
 @asynccontextmanager
