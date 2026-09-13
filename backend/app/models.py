@@ -11,56 +11,12 @@ class Team(BaseModel):
     country: str
     code: str
     logo: Optional[str] = None
-    riders: Optional[int] = None
-    wins_season: Optional[int] = None
-    website: Optional[str] = None
     source_url: Optional[str] = None
-
-
-class Race(BaseModel):
-    id: str
-    name: str
-    category: Literal["wt", "pro", "cont"]
-    type: Literal["gt", "monument", "one_day", "stage_race"]
-    start_date: str
-    end_date: str
-    country: str
-    distance: Optional[str] = None
-    stages: Optional[int] = None
-    winner_previous_year: Optional[str] = None
-    winner_team_previous_year: Optional[str] = None
-    website: Optional[str] = None
-    source_url: Optional[str] = None
-
-
-class CalendarEvent(BaseModel):
-    id: str
-    date: str
-    race_id: str
-    race_name: str
-
-
-class RiderResult(BaseModel):
-    position: int
-    rider: str
-    team: str
-    time: Optional[str] = None
-    gap: Optional[str] = None
-
-
-class LiveResult(BaseModel):
-    id: str
-    race_id: str
-    race_name: str
-    stage: Optional[int] = None
-    status: Literal["live", "finished", "upcoming"]
-    current_km: Optional[float] = None
-    total_km: Optional[float] = None
-    start_time: Optional[str] = None
-    estimated_finish: Optional[str] = None
-    category: Optional[str] = None
-    results: list[RiderResult] = []
-    source_url: Optional[str] = None
+    # Hier standen zusätzlich riders, wins_season und website. Alle drei
+    # wurden vom Scraper fest auf None gesetzt, von keiner Abfrage gelesen
+    # und hatten keine Spalte in der teams-Tabelle - Felder, die in der
+    # API-Antwort aussahen als kämen da Daten. Die Fahrerzahl liefert
+    # db.count_riders(team_id), die Siege /api/teams/{id}/stats.
 
 
 class NewsItem(BaseModel):
@@ -70,12 +26,6 @@ class NewsItem(BaseModel):
     source: str
     published: Optional[str] = None
     summary: Optional[str] = None
-
-
-class RefreshMeta(BaseModel):
-    last_updated: Optional[str] = None
-    stale: bool = False
-    error: Optional[str] = None
 
 
 class RosterRider(BaseModel):
@@ -138,11 +88,15 @@ class RiderDetail(Rider):
 
 
 # ---------------------------------------------------------------------------
-# Renn-Historie (app/db_races.py): eigenständige, persistente Datenbank aller
-# UCI-WorldTour-, ProSeries- und Continental-Tour-Rennen seit 2010 - getrennt
-# von Race/LiveResult oben, die die AKTUELLE Saison aus dem flüchtigen
-# JSON-Cache bedienen (app/cache.py, für Kalender/Live-Ticker auf der
-# Startseite). Siehe backend/README.md, Abschnitt "Renn-Historie".
+# Renn-Historie (app/db_races.py): die persistente Datenbank aller
+# UCI-WorldTour-, ProSeries- und Continental-Tour-Rennen seit 2010 und die
+# einzige Quelle für Renn-Daten.
+#
+# Daneben standen hier früher Race, CalendarEvent, RiderResult und
+# LiveResult: dieselben Rennen, nur für die aktuelle Saison und aus dem
+# flüchtigen JSON-Cache. Zwei Modellsätze und zwei Scraper für eine Sache,
+# von denen der Cache-Pfad nach jedem Deploy leer war. Er ist entfallen,
+# siehe backend/README.md, Abschnitt "Renn-Daten: ein Pfad statt zwei".
 # ---------------------------------------------------------------------------
 
 
@@ -187,6 +141,11 @@ class RaceRecord(BaseModel):
     backend/README.md, Abschnitt "Bekannte Lücke") - bleibt NULL, bis ein
     künftiger Import aus einer anderen Quelle die Werte nachträgt."""
     wiki_url: Optional[str] = None
+    is_grand_tour: bool = False
+    """Ob das Rennen eine Grand Tour ist. Nicht gescraped und keine
+    Tabellenspalte, sondern beim Lesen aus dem Namen bestimmt - siehe
+    app/race_meta.py, dort steht auch, warum. Die Einordnung lag vorher
+    im Frontend (js/races.js)."""
     organizer_website: Optional[str] = None
     """Offizielle Veranstalter-Website (z.B. amstelgoldrace.nl), sofern in
     der Wikipedia-Infobox als 'Website' gepflegt - NICHT selbst gescraped

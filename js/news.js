@@ -1,23 +1,27 @@
 // ===== NEWS-SEITE =====
 // Erste Meldung groß als Featured-Card, Rest im Karten-Grid. Filter-Chips
 // nach Quelle werden dynamisch aus den geladenen Daten gebaut.
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { errorPanel, loadingPanel, starten, statePanel } from './ui.js';
+
 let allNews = [];
 let currentSource = 'all';
 
-document.addEventListener('DOMContentLoaded', async () => {
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'News' }] });
 
     const content = document.getElementById('news-content');
     if (renderComingSoonIfWomen(content)) return;
 
-    content.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade News…</h3></div>`;
+    content.innerHTML = loadingPanel('Lade News…');
     try {
         const { news } = await Api.getNews(30);
         allNews = news || [];
         renderPage(content);
     } catch (err) {
         console.error('Fehler beim Laden der News:', err);
-        content.innerHTML = `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>News konnten nicht geladen werden.</h3><p>Bitte später erneut versuchen.</p></div>`;
+        content.innerHTML = errorPanel('News konnten nicht geladen werden.', 'Bitte später erneut versuchen.');
     }
 });
 
@@ -40,7 +44,7 @@ function getFiltered() {
 
 function renderPage(container) {
     if (allNews.length === 0) {
-        container.innerHTML = `<div class="state-panel"><i class="fas fa-newspaper"></i><h3>Keine News verfügbar</h3></div>`;
+        container.innerHTML = statePanel('fas fa-newspaper', 'Keine News verfügbar');
         return;
     }
 
@@ -71,7 +75,7 @@ function renderList() {
 
     if (filtered.length === 0) {
         featuredWrap.innerHTML = '';
-        gridWrap.innerHTML = `<div class="state-panel"><i class="fas fa-filter"></i><h3>Keine News für diese Auswahl</h3></div>`;
+        gridWrap.innerHTML = statePanel('fas fa-filter', 'Keine News für diese Auswahl');
         return;
     }
 

@@ -1,4 +1,7 @@
 // ===== SHARED NAVIGATION + GENDER-UMSCHALTER =====
+// ES-Modul.
+import { escapeHtml } from './api.js';
+import { statePanel } from './ui.js';
 // Rendert die Top-Nav (Logo, Breadcrumbs, Männer/Frauen-Umschalter) in
 // #site-nav auf jeder Seite. Der Umschalter-Zustand liegt in localStorage
 // und gilt seitenübergreifend. Das Backend liefert aktuell ausschließlich
@@ -10,7 +13,7 @@ function getGender() {
     return localStorage.getItem(GENDER_STORAGE_KEY) === 'women' ? 'women' : 'men';
 }
 
-function isWomen() {
+export function isWomen() {
     return getGender() === 'women';
 }
 
@@ -18,7 +21,7 @@ function setGender(gender) {
     localStorage.setItem(GENDER_STORAGE_KEY, gender === 'women' ? 'women' : 'men');
 }
 
-function renderNav({ crumbs = [] } = {}) {
+export function renderNav({ crumbs = [] } = {}) {
     const mount = document.getElementById('site-nav');
     if (!mount) return;
 
@@ -57,14 +60,13 @@ function renderNav({ crumbs = [] } = {}) {
 // Zeigt einen "kommt bald"-Platzhalter im übergebenen Container, falls
 // "Frauen" aktiv ist. Gibt true zurück, wenn der Aufrufer daraufhin das
 // Laden der eigentlichen (Männer-)Daten überspringen soll.
-function renderComingSoonIfWomen(container) {
+export function renderComingSoonIfWomen(container) {
     if (!container || !isWomen()) return false;
-    container.innerHTML = `
-        <div class="state-panel coming-soon">
-            <i class="fas fa-hourglass-half"></i>
-            <h3>Frauen World Tour kommt bald</h3>
-            <p>Teams, Rennkalender und Ergebnisse der UCI Women's World Tour sind noch nicht angebunden. Schau bald wieder vorbei.</p>
-        </div>
-    `;
+    container.innerHTML = statePanel(
+        'fas fa-hourglass-half',
+        'Frauen World Tour kommt bald',
+        "Teams, Rennkalender und Ergebnisse der UCI Women's World Tour sind noch nicht angebunden. Schau bald wieder vorbei.",
+        'state-panel coming-soon',
+    );
     return true;
 }

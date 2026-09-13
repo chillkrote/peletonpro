@@ -9,9 +9,15 @@
 // Zeile nachgeladen (GET /api/race-history/{id}) statt für alle Rennen
 // einer Saison vorab - bei teils 200+ Rennen/Saison wäre das zu viel auf
 // einmal.
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import {
+    errorPanel, formatCalendarDate, loadingPanel, pendingPanel, starten, statePanel,
+    todayCalendarIso,
+} from './ui.js';
+
 const CATEGORY_LABEL = { wt: 'World Tour', proseries: 'ProSeries', continental: 'Continental' };
 const CIRCUIT_LABEL = { africa: 'Africa Tour', asia: 'Asia Tour', europe: 'Europe Tour', america: 'America Tour', oceania: 'Oceania Tour' };
-const GRAND_TOUR_NAMES = new Set(['Tour de France', 'Giro d\'Italia', 'Vuelta a España', 'Vuelta a Espana']);
 
 // Rennen werden pro Saison geladen und hier zwischengespeichert, statt alle
 // Saisons auf einmal zu holen: die Renn-Historie umfasst schon jetzt ~2.000
@@ -23,7 +29,7 @@ let selectedSeason = null;
 let selectedCategory = '';
 const detailCache = new Map();
 
-document.addEventListener('DOMContentLoaded', async () => {
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Races' }] });
 
     const content = document.getElementById('races-content');
@@ -38,13 +44,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         SEASONS = res.seasons || [];
         if (SEASONS.length === 0) {
-            content.innerHTML = `<div class="state-panel"><i class="fas fa-hourglass-half"></i><h3>Noch keine Rennen geladen</h3><p>Die Renn-Historie wird gerade im Hintergrund befüllt - schau in ein paar Minuten wieder vorbei.</p></div>`;
+            content.innerHTML = pendingPanel('Noch keine Rennen geladen', 'Die Renn-Historie');
             return;
         }
         await initSeasonsAndCategories();
     } catch (err) {
         console.error('Fehler beim Laden des Rennkalenders:', err);
-        content.innerHTML = errorPanel('Rennkalender konnte nicht geladen werden.');
+        content.innerHTML = errorPanel('Rennkalender konnte nicht geladen werden.', 'Bitte später erneut versuchen.');
     }
 });
 
@@ -66,14 +72,6 @@ async function loadSeason(season) {
     return races;
 }
 
-function loadingPanel(text) {
-    return `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>${escapeHtml(text)}</h3></div>`;
-}
-
-function errorPanel(text, detail) {
-    return `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>${escapeHtml(text)}</h3><p>${escapeHtml(detail || 'Bitte später erneut versuchen.')}</p></div>`;
-}
-
 // Lokales Kalenderdatum (siehe js/ui.js). Vorher das UTC-Datum aus
 // toISOString(), was an den Tagesgrenzen gegen die lokal angezeigten
 // Renndaten daneben lag.
@@ -85,8 +83,11 @@ function isLiveRace(race) {
     return !!race.start_date && !!race.end_date && race.start_date <= todayIso() && todayIso() <= race.end_date;
 }
 
+// Die Einordnung kommt jetzt vom Backend (RaceRecord.is_grand_tour, siehe
+// backend/app/race_meta.py). Vorher stand hier eine eigene Namensliste -
+// und im Backend eine zweite, die für "Vuelta a España" nicht ansprang.
 function isGrandTour(race) {
-    return GRAND_TOUR_NAMES.has(race.name);
+    return !!race.is_grand_tour;
 }
 
 function byDateAsc(a, b) {
@@ -169,7 +170,7 @@ async function renderCurrentSelection() {
         races = await loadSeason(selectedSeason);
     } catch (err) {
         console.error('Fehler beim Laden der Saison:', err);
-        content.innerHTML = errorPanel(`Saison ${selectedSeason} konnte nicht geladen werden.`);
+        content.innerHTML = errorPanel(`Saison ${selectedSeason} konnte nicht geladen werden.`, 'Bitte später erneut versuchen.');
         return;
     }
     if (selectedCategory) races = races.filter((r) => r.category === selectedCategory);
@@ -182,7 +183,7 @@ async function renderCurrentSelection() {
 
 function renderRaceList(container, races) {
     if (races.length === 0) {
-        container.innerHTML = `<div class="state-panel"><i class="fas fa-calendar-xmark"></i><h3>Keine Rennen in dieser Auswahl</h3></div>`;
+        container.innerHTML = statePanel('fas fa-calendar-xmark', 'Keine Rennen in dieser Auswahl');
         return;
     }
 
@@ -258,7 +259,7 @@ function attachExpandHandlers(container) {
             row.classList.add('expanded');
             const panel = document.createElement('div');
             panel.className = 'race-results-panel';
-            panel.innerHTML = `<div class="state-panel small"><i class="fas fa-spinner fa-spin"></i><h3>Lade Ergebnisse…</h3></div>`;
+            panel.innerHTML = statePanel('fas fa-spinner fa-spin', 'Lade Ergebnisse…', null, 'state-panel small');
             row.after(panel);
 
             try {

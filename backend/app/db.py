@@ -422,6 +422,56 @@ def get_riders(
     return [_row_to_rider(row) for row in rows]
 
 
+# wiki_url heißt nach außen source_url - so hieß das Feld im Team-Modell und
+# so liest es das Frontend (js/rider.js baut daraus die Zuordnung
+# Wikipedia-URL -> interne Team-ID). Der Alias steht hier, damit die
+# Umbenennung an einer Stelle liegt und nicht in jedem Router.
+_TEAM_COLUMNS = "id, name, category, country, code, logo, wiki_url AS source_url"
+
+
+def get_team(team_id: str) -> Optional[dict]:
+    """Ein Team aus der Datenbank."""
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_TEAM_COLUMNS} FROM teams WHERE id = %s", (team_id,)
+        ).fetchone()
+
+
+def get_teams(category: Optional[str] = None) -> list[dict]:
+    """Alle Teams, nach Namen sortiert.
+
+    Die Liste kam vorher aus app/cache.py, also aus einer JSON-Datei neben
+    derselben Tabelle - dieselben Teams an zwei Orten. Der Scraper schrieb
+    in beide (refresh_teams in den Cache, refresh_rosters zusätzlich in die
+    Tabelle), /api/teams las den Cache und /api/teams/{id}/stats die
+    Tabelle. Konnten also auseinanderlaufen, und auf Renders Free-Plan taten
+    sie das nach jedem Deploy: der Cache liegt auf dem flüchtigen
+    Dateisystem und ist dann leer, die Tabelle nicht.
+
+    Jetzt ist die Tabelle die einzige Quelle. Das ist auch die Richtung, die
+    für weitere Teams (Frauen-WorldTeams, ProTeams) trägt: die Tabelle hat
+    ein category-Feld und kann wachsen, eine JSON-Datei pro Abruf nicht.
+    """
+    clause = ""
+    params: list = []
+    if category:
+        clause = " WHERE category = %s"
+        params.append(category)
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT {_TEAM_COLUMNS} FROM teams{clause} ORDER BY name", params
+        ).fetchall()
+
+
+def teams_last_updated() -> Optional[str]:
+    """Zeitpunkt des jüngsten Team-Upserts, als ISO-String, oder None bei
+    leerer Tabelle. Ersetzt das last_updated des Cache-Eintrags."""
+    with _connect() as conn:
+        row = conn.execute("SELECT max(last_updated) AS ts FROM teams").fetchone()
+    ts = row["ts"] if row else None
+    return ts.isoformat() if ts is not None else None
+
+
 def count_riders(team_id: Optional[str] = None) -> int:
     clause, params = _rider_filter(team_id)
     with _connect() as conn:

@@ -1,4 +1,8 @@
 // ===== API CLIENT =====
+// ES-Modul. Exportiert werden nur escapeHtml, safeUrl und Api. API_BASE,
+// apiError und apiGet bleiben modul-intern: apiGet wird ausschließlich vom
+// Api-Objekt unten benutzt, und ein Aufrufer soll die Pfade nicht selbst
+// zusammenbauen, sondern eine Api-Methode nehmen.
 // Basis-URL des Backends. Lokal (Entwicklung) automatisch localhost:8001,
 // sonst die deployte Render-URL. Bei Bedarf vor dem Laden dieses Skripts
 // überschreiben: <script>window.PELOTONPRO_API_BASE = '...';</script>
@@ -6,7 +10,16 @@ const API_BASE =
     window.PELOTONPRO_API_BASE ||
     (['localhost', '127.0.0.1'].includes(window.location.hostname)
         ? 'http://localhost:8001'
-        : 'https://peletonpro-api.onrender.com'); // TODO: nach dem Deployment auf Render anpassen
+        : 'https://peletonpro-api.onrender.com');
+
+// Der HTTP-Status hängt am Error als .status. Ohne das kann ein Aufrufer
+// "gibt es nicht" (404) nicht von "ist gerade kaputt" unterscheiden und muss
+// beides gleich melden - js/team.js unterscheidet es.
+function apiError(message, status) {
+    const err = new Error(message);
+    err.status = status;
+    return err;
+}
 
 async function apiGet(path) {
     const response = await fetch(`${API_BASE}${path}`);
@@ -19,9 +32,9 @@ async function apiGet(path) {
             const wann = Number.isFinite(retry) && retry > 0
                 ? `Bitte in ${retry} Sekunden erneut versuchen.`
                 : 'Bitte kurz warten und erneut versuchen.';
-            throw new Error(`Zu viele Anfragen. ${wann}`);
+            throw apiError(`Zu viele Anfragen. ${wann}`, 429);
         }
-        throw new Error(`API-Fehler ${response.status} bei ${path}`);
+        throw apiError(`API-Fehler ${response.status} bei ${path}`, response.status);
     }
     return response.json();
 }
@@ -29,7 +42,7 @@ async function apiGet(path) {
 // Kleine Sicherheitshelfer: Daten aus API/Scraping/RSS sind externer
 // Herkunft und werden per innerHTML gerendert - daher immer escapen bzw.
 // Protokoll von URLs validieren, bevor sie in href/src landen.
-function escapeHtml(value) {
+export function escapeHtml(value) {
     if (value === null || value === undefined) return '';
     return String(value)
         .replace(/&/g, '&amp;')
@@ -39,7 +52,7 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function safeUrl(url) {
+export function safeUrl(url) {
     if (!url) return '#';
     try {
         const parsed = new URL(url, window.location.href);
@@ -49,24 +62,30 @@ function safeUrl(url) {
     }
 }
 
-const Api = {
+export const Api = {
     getTeams(category) {
         return apiGet(`/api/teams${category ? `?category=${category}` : ''}`);
     },
-    getRaces() {
-        return apiGet('/api/races');
+    getTeam(id) {
+        return apiGet(`/api/teams/${encodeURIComponent(id)}`);
     },
-    getCalendar() {
-        return apiGet('/api/calendar');
-    },
-    getResults(status) {
-        return apiGet(`/api/results${status ? `?status=${status}` : ''}`);
+    getTeamStats(id, season) {
+        const q = season ? `?season=${season}` : '';
+        return apiGet(`/api/teams/${encodeURIComponent(id)}/stats${q}`);
     },
     getNews(limit = 30) {
         return apiGet(`/api/news?limit=${limit}`);
     },
-    getRiders(team) {
-        return apiGet(`/api/riders${team ? `?team=${encodeURIComponent(team)}` : ''}`);
+    // `limit`/`offset` reichen an die Paginierung des Backends durch. Wer nur
+    // die Gesamtzahl braucht, holt eine Zeile (limit=1) und liest `total` -
+    // siehe js/home.js.
+    getRiders(team, { limit, offset } = {}) {
+        const params = new URLSearchParams();
+        if (team) params.set('team', team);
+        if (limit !== undefined) params.set('limit', limit);
+        if (offset !== undefined) params.set('offset', offset);
+        const query = params.toString();
+        return apiGet(`/api/riders${query ? `?${query}` : ''}`);
     },
     getRider(id) {
         return apiGet(`/api/riders/${encodeURIComponent(id)}`);

@@ -1,15 +1,19 @@
-"""Hintergrund-Scheduler: aktualisiert den Cache periodisch aus den Quellen.
+"""Hintergrund-Scheduler: aktualisiert die Daten periodisch aus den Quellen.
 
-Jeder refresh_*-Job fängt alle Exceptions ab und schreibt sie über
-cache.mark_error weg, statt den Scheduler-Thread (und damit alle
-folgenden Jobs) abstürzen zu lassen. Der zuletzt erfolgreiche Datenstand
-bleibt dabei erhalten (siehe app/cache.py).
+Ziel ist bei allen Jobs außer News die Postgres-Datenbank (app/db.py,
+app/db_races.py); News laufen weiter über app/cache.py, weil es dafür
+keine Tabelle gibt (Begründung in app/cache.py).
+
+Jeder refresh_*-Job fängt alle Exceptions ab, statt den Scheduler-Thread
+(und damit alle folgenden Jobs) abstürzen zu lassen. Der zuletzt
+erfolgreiche Datenstand bleibt dabei erhalten: ein fehlgeschlagener Lauf
+schreibt einfach nicht.
 """
 import argparse
 import logging
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -22,10 +26,8 @@ from .config import (
     RACE_HISTORY_RUN_SECONDS,
     RACE_HISTORY_START_YEAR,
     RACE_SEASON_YEAR,
-    REFRESH_INTERVAL_CALENDAR,
     REFRESH_INTERVAL_NEWS,
     REFRESH_INTERVAL_RACE_HISTORY,
-    REFRESH_INTERVAL_RESULTS,
     REFRESH_INTERVAL_RIDER_DETAILS,
     REFRESH_INTERVAL_ROSTERS,
     REFRESH_INTERVAL_TEAMS,
@@ -33,12 +35,11 @@ from .config import (
     RIDER_HISTORY_BATCH_SIZE,
     STRAVA_BATCH_SIZE,
 )
-from .models import Race, Team
+from .models import Team
 from .news.rss import fetch_all_news
 from .scrapers.wikidata import fetch_strava_urls
 from .scrapers.wikipedia import wiki_title_from_url
 from .scrapers.wikipedia_race_history import fetch_race_details, fetch_season_race_list
-from .scrapers.wikipedia_races import fetch_race_calendar, fetch_race_result
 from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team, split_name
 from .scrapers.wikipedia_teams import fetch_current_worldteams
 
@@ -94,65 +95,28 @@ def _timed(func, job_id: str):
 
 
 def refresh_teams() -> None:
+    """Die aktuellen WorldTeams von Wikipedia in die teams-Tabelle schreiben.
+
+    Schrieb vorher in den JSON-Cache, und refresh_rosters kopierte den
+    Inhalt anschließend zusätzlich in die Tabelle - dieselben Teams an zwei
+    Orten, mit dem Cache als Zwischenstation ohne Zweck (siehe
+    db.get_teams). Jetzt geht der Weg direkt in die Tabelle.
+
+    Ein fehlgeschlagener Lauf verwirft keine Daten: der Upsert kommt gar
+    nicht zustande, die vorhandenen Zeilen bleiben stehen. Das leistete
+    vorher cache.mark_error, und die Tabelle tut es von sich aus.
+    """
+    if not db.is_configured():
+        logger.info("Team-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
+        return
     try:
         teams = fetch_current_worldteams()
-        cache.set("teams", [t.model_dump() for t in teams])
+        db.upsert_teams(teams)
         logger.info("Teams aktualisiert: %d Einträge", len(teams))
     except Exception as exc:  # noqa: BLE001 - Job darf niemals crashen
         logger.error("Team-Refresh fehlgeschlagen: %s", exc)
-        cache.mark_error("teams", str(exc))
 
 
-def refresh_calendar() -> None:
-    try:
-        races = fetch_race_calendar()
-        cache.set("races", [r.model_dump() for r in races])
-        logger.info("Rennkalender aktualisiert: %d Einträge", len(races))
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Kalender-Refresh fehlgeschlagen: %s", exc)
-        cache.mark_error("races", str(exc))
-
-
-def refresh_results() -> None:
-    """Holt Ergebnisse für alle bereits gestarteten Rennen der Saison.
-
-    Anders als bei Live-Scraping (procyclingstats.com) gibt es hier keinen
-    Sinn in einem engen "aktuell laufend"-Fenster: Wikipedia-Artikel werden
-    von Freiwilligen bearbeitet, nicht in Echtzeit, und das Endergebnis
-    bleibt nach Rennende dauerhaft im Artikel stehen. Daher werden alle
-    Rennen berücksichtigt, deren Startdatum in der Vergangenheit liegt -
-    Rennen, für die noch kein Ergebnis-Abschnitt existiert (laufend oder
-    Artikel noch nicht aktualisiert), liefern einfach kein Ergebnis (siehe
-    fetch_race_result) und werden übersprungen.
-
-    Best-effort: basiert auf dem zuletzt gecachten Kalender. Ohne Kalender-
-    Daten (z.B. beim allerersten Start) wird der Lauf übersprungen.
-    """
-    calendar_entry = cache.get("races")
-    if not calendar_entry or not calendar_entry.get("data"):
-        logger.info("Ergebnis-Refresh übersprungen: noch kein Kalender im Cache")
-        return
-
-    today = date.today().isoformat()
-    started_races = [r for r in calendar_entry["data"] if r["start_date"] <= today]
-
-    results = []
-    errors = []
-    for race_dict in started_races:
-        try:
-            race = Race(**race_dict)
-            result = fetch_race_result(race)
-            if result is not None:
-                results.append(result.model_dump())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Ergebnis-Scraping für '%s' fehlgeschlagen: %s", race_dict["id"], exc)
-            errors.append(f"{race_dict['id']}: {exc}")
-
-    if results:
-        cache.set("results", results)
-        logger.info("Ergebnisse aktualisiert: %d Rennen mit Ergebnis", len(results))
-    elif errors:
-        cache.mark_error("results", "; ".join(errors))
 
 
 def refresh_rosters() -> None:
@@ -168,23 +132,27 @@ def refresh_rosters() -> None:
     ausgehungert (siehe backend/README.md, Abschnitt "Hintergrund-Jobs").
 
     Übersprungen, wenn keine Datenbank konfiguriert ist (DATABASE_URL
-    fehlt, siehe app/db.py) oder noch keine Teams im Cache sind.
+    fehlt, siehe app/db.py) oder die teams-Tabelle noch leer ist. Die Teams
+    schreibt refresh_teams; vorher las dieser Job sie aus dem JSON-Cache
+    und schrieb sie selbst zusätzlich in die Tabelle.
     """
     if not db.is_configured():
         logger.info("Kader-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
         return
 
-    teams_entry = cache.get("teams")
-    teams_data = teams_entry.get("data") if teams_entry else None
-    if not teams_data:
-        logger.info("Kader-Refresh übersprungen: noch keine Teams im Cache")
+    try:
+        team_rows = db.get_teams()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Kader-Refresh übersprungen: Team-Liste nicht lesbar: %s", exc)
+        return
+    if not team_rows:
+        logger.info(
+            "Kader-Refresh übersprungen: noch keine Teams in der Datenbank "
+            "(refresh_teams läuft alle %ds und füllt sie)", REFRESH_INTERVAL_TEAMS
+        )
         return
 
-    teams = [Team(**t) for t in teams_data]
-    try:
-        db.upsert_teams(teams)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Team-Upsert fehlgeschlagen (%d Teams): %s", len(teams), exc)
+    teams = [Team(**row) for row in team_rows]
 
     # Erst alle Kader sammeln, dann EINMAL schreiben. Die Fehlerbehandlung
     # pro Team bleibt: ein Team, dessen Wikipedia-Seite sich geändert hat,
@@ -457,8 +425,6 @@ def refresh_news() -> None:
 # Worker - siehe start_scheduler().
 JOBS = [
     (refresh_teams, REFRESH_INTERVAL_TEAMS, "refresh_teams", "scrape"),
-    (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar", "scrape"),
-    (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results", "scrape"),
     (refresh_rosters, REFRESH_INTERVAL_ROSTERS, "refresh_rosters", "scrape"),
     (refresh_rider_details, REFRESH_INTERVAL_RIDER_DETAILS, "refresh_rider_details", "scrape"),
     (refresh_race_history, REFRESH_INTERVAL_RACE_HISTORY, "refresh_race_history", "scrape"),

@@ -1,7 +1,11 @@
 // ===== STARTSEITE =====
 // Nur die 3 Kacheln (Races/Teams/News) + Gender-Umschalter. Lädt lediglich
 // die Anzahl je Bereich für die kleinen Badges auf den Kacheln.
-document.addEventListener('DOMContentLoaded', async () => {
+import { Api } from './api.js';
+import { isWomen, renderNav } from './nav.js';
+import { starten } from './ui.js';
+
+starten(async () => {
     renderNav();
 
     if (isWomen()) {
@@ -14,13 +18,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         const [teamsRes, racesRes, newsRes, ridersRes] = await Promise.all([
             Api.getTeams(),
-            Api.getRaces(),
+            // Nur die Gesamtzahl, nicht die Rennen selbst: limit=1 holt eine
+            // Zeile, `total` nennt den vollen Bestand (siehe
+            // routers/race_history.py).
+            Api.getRaceHistory({ limit: 1 }).catch(() => null),
             Api.getNews(1),
-            Api.getRiders().catch(() => null), // Fahrer-DB kann fehlen (kein DATABASE_URL) - Kachel bleibt dann bei Teams-Zahl
+            // Ebenso nur die Zahl. Vorher holte die Startseite alle ~500
+            // Fahrer, um sie zu zählen - mit dem Frauen-Radsport wären das
+            // ein paar Tausend, für eine Zahl in einer Kachel.
+            // Fahrer-DB kann fehlen (kein DATABASE_URL) - dann bleibt die
+            // Kachel bei der Teams-Zahl.
+            Api.getRiders(null, { limit: 1 }).catch(() => null),
         ]);
         const teamCount = (teamsRes.teams || []).length;
-        const riderCount = ridersRes && !ridersRes.error ? (ridersRes.riders || []).length : null;
-        setBadge('tile-races-count', `${(racesRes.races || []).length} Rennen`);
+        const riderCount = ridersRes && !ridersRes.error ? ridersRes.total : null;
+        const raceCount = racesRes && !racesRes.error ? racesRes.total : null;
+        setBadge('tile-races-count', raceCount !== null ? `${raceCount} Rennen` : '–');
         setBadge('tile-teams-count', riderCount !== null ? `${teamCount} Teams · ${riderCount} Fahrer` : `${teamCount} Teams`);
         setBadge('tile-news-count', newsRes.last_updated ? 'aktuell' : '–');
     } catch (err) {

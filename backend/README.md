@@ -9,16 +9,20 @@ aggregierter Radsport-Newsfeed.
 ```
 Scheduler (APScheduler, Hintergrund-Thread)
   -> Scraper (Wikipedia-API) / RSS-Aggregator
-  -> Cache (In-Memory + JSON-Datei unter data/)
+  -> Postgres (app/db.py, app/db_races.py)   [Teams, Fahrer, Rennen]
+     bzw. Cache (In-Memory + JSON-Datei)     [nur News, app/cache.py]
   -> REST-API (FastAPI) --GET--> Frontend (index.html)
 ```
 
-Die API liest **nie live** von den Quellen, sondern immer aus dem Cache.
-Das hält Requests schnell, schont die Zielseiten und sorgt dafür, dass ein
-einzelner fehlschlagender Scraping-Lauf nicht die ganze Seite lahmlegt -
-es wird einfach der letzte funktionierende Stand weiter ausgeliefert
-(inkl. `error`-Feld in der API-Antwort, falls der letzte Versuch
-fehlschlug).
+Die API liest **nie live** von den Quellen, sondern immer aus dem
+gespeicherten Stand. Das hält Requests schnell, schont die Zielseiten und
+sorgt dafür, dass ein einzelner fehlschlagender Scraping-Lauf nicht die
+ganze Seite lahmlegt - es wird einfach der letzte funktionierende Stand
+weiter ausgeliefert.
+
+Alles außer News liegt in Postgres. Der JSON-Cache bediente früher auch
+Teams und Rennen; warum er das nicht mehr tut, steht unter
+"Doppelstrukturen".
 
 ## Datenquelle: Wikipedia (statt procyclingstats.com)
 
@@ -41,16 +45,18 @@ Teams/Ergebnisse müssen ohnehin nicht in Echtzeit aktuell sein.
   (oberste Stufe, aktuell 18 Teams) ab - **keine ProTeams oder
   Continental Teams**, da Wikipedias UCI-World-Tour-Artikel diese nicht
   auflistet (anders als procyclingstats.com).
-- **`app/scrapers/wikipedia_races.py`** - VERIFIZIERT (Stand 2026-09-11).
-  - Kalender: Saison-Artikel `"{Jahr} UCI World Tour"`, Abschnitt
-    "Events" - eine `<table class="wikitable plainrowheaders">` mit
-    Renn-Link+Länderflagge, Datum, Sieger/Zweiter/Dritter.
-  - Ergebnisse: der eigene Wikipedia-Artikel jedes Rennens (Link kommt
-    direkt aus der Kalendertabelle). Etappenrennen nutzen den Abschnitt
-    "General classification" (von Wikipedia selbst schon auf Top 10
-    begrenzt), Eintagesrennen den Abschnitt "Result" - beide mit
-    derselben Rank/Rider/Team/Time-Tabellenstruktur, nur mit
-    unterschiedlicher Rang-Zellenart (`<th scope="row">` bzw. `<td>`).
+- **`app/scrapers/wikipedia_race_history.py`** - VERIFIZIERT
+  (Stand 2026-09-11). Seeding aus den Saison-Übersichtsseiten, dann pro
+  Rennen der eigene Artikel (Infobox, Etappenliste, Ergebnisse).
+  Etappenrennen nutzen den Abschnitt "General classification" (von
+  Wikipedia selbst schon auf Top 10 begrenzt), Eintagesrennen den
+  Abschnitt "Result" - beide mit derselben
+  Rank/Rider/Team/Time-Tabellenstruktur, nur mit unterschiedlicher
+  Rang-Zellenart (`<th scope="row">` bzw. `<td>`). Der Zeilen-Parser dafür
+  steht in `app/scrapers/wikipedia_tables.py`.
+  Ein zweiter Scraper (`wikipedia_races.py`) las dieselben Seiten für
+  einen eigenen Kalender-/Ergebnis-Pfad; er ist entfallen, siehe
+  "Doppelstrukturen".
 
 So testet man die Parser ohne Netzwerkzugriff gegen gespeichertes HTML
 (z.B. per Browser-Devtools oder `action=parse&prop=text&section=N`
@@ -58,19 +64,26 @@ kopiert):
 
 ```python
 from app.scrapers.wikipedia_teams import parse_worldteams_section
-from app.scrapers.wikipedia_races import parse_calendar_section, parse_result_section
+from app.scrapers.wikipedia_race_history import parse_season_page, parse_race_infobox
 
 teams = parse_worldteams_section(open("worldteams_section.html", encoding="utf-8").read())
-races = parse_calendar_section(open("events_section.html", encoding="utf-8").read(), 2026)
-result = parse_result_section(open("result_section.html", encoding="utf-8").read(), "tour-de-france", "Tour de France")
+races = parse_season_page(open("season_page.html", encoding="utf-8").read(), 2026)
+infobox = parse_race_infobox(open("race_article.html", encoding="utf-8").read())
 ```
+
+Der Ergebnis-Zeilen-Parser steht in `app/scrapers/wikipedia_tables.py`
+(`parse_result_row`) und lässt sich einzeln gegen eine gespeicherte
+Tabellenzeile testen.
 
 Mit echtem Netzwerkzugriff (lokal) direkt gegen die Live-API:
 
 ```bash
 cd backend
 python -m app.scrapers.wikipedia_teams   # sollte Team-Objekte ausgeben
-python -m app.scrapers.wikipedia_races   # sollte Race-Objekte ausgeben
+
+# Renn-Historie hat kein __main__; der Einstieg ueber Netz ist:
+python -c "from app.scrapers.wikipedia_race_history import fetch_season_race_list; \
+           print(fetch_season_race_list(2026, 'wt')[:3])"
 ```
 
 Falls keine oder falsche Daten erscheinen: Wikipedia-Artikel werden von
@@ -87,12 +100,12 @@ Indizes, aber kein Schutz gegen inhaltliche Umbenennungen.
 - Mindestabstand zwischen Requests an dieselbe Quelle
   (`SCRAPER_REQUEST_DELAY_SECONDS`, Default 2s), auch gegenüber der
   Wikipedia-API.
-- Aggressives Caching: Teams/Kalender werden nur 1x täglich neu geholt,
-  Ergebnisse 1x pro Stunde für alle bereits gestarteten Saison-Rennen
-  (kein "nur während des Rennens"-Fenster mehr, siehe
-  `scheduler.refresh_results` - Wikipedia-Endstände bleiben nach
-  Rennende dauerhaft im Artikel stehen, ein Live-Ticker wäre hier ohnehin
-  nicht sinnvoll, da Wikipedia nicht in Echtzeit editiert wird).
+- Aggressives Speichern: Teams und Kader werden nur 1x täglich neu
+  geholt, Renn-Details nur einmal pro Rennen (danach steht
+  `races.results_fetched_at` und das Rennen wird nicht erneut abgefragt).
+  Ein Live-Ticker wäre hier ohnehin nicht sinnvoll, da Wikipedia nicht in
+  Echtzeit editiert wird - Endstände stehen nach Rennende dauerhaft im
+  Artikel.
 
 ### Historie: procyclingstats.com blockiert Cloud-Hosting (Stand 2026-09-11)
 
@@ -149,14 +162,14 @@ Datenquelle verwendet - stattdessen wird Wikipedia genutzt, siehe
 
 ## Fahrer-Datenbank (Teams <-> Fahrer, Team-Wechsel-Historie)
 
-Zusätzlich zum flüchtigen JSON-Cache gibt es eine **persistente Postgres-
-Datenbank** (`app/db.py`) für Fahrer und deren Team-Zugehörigkeit über die
-Jahre. Grund für die echte Persistenz (anders als bei Teams/Rennen/News):
-ein vollständiger Rebuild aller ~500 Fahrer-Historien (ein
+Teams, Fahrer und deren Team-Zugehörigkeit über die Jahre liegen in einer
+**persistenten Postgres-Datenbank** (`app/db.py`). Grund für die echte
+Persistenz: ein vollständiger Rebuild aller ~500 Fahrer-Historien (ein
 Wikipedia-Abruf pro Fahrer, respektvoll ratenlimitiert) dauert 15-20
 Minuten - das soll nicht nach jedem Render-Neustart (Deploy, Aufwachen aus
 dem Schlafmodus) erneut passieren, wie es beim flüchtigen Cache der Fall
-wäre.
+wäre. Aus demselben Grund liegen dort inzwischen auch die Teams, siehe
+"Doppelstrukturen".
 
 - **`app/scrapers/wikipedia_riders.py`** - VERIFIZIERT (Stand 2026-09-12).
   - Kader: Team-Wikipedia-Seite, Abschnitt mit "roster" im Namen (i.d.R.
@@ -412,6 +425,19 @@ uvicorn app.main:app --reload --port 8001
 API läuft dann unter `http://localhost:8001`, z.B.
 `http://localhost:8001/api/teams`.
 
+Das Frontend braucht einen HTTP-Server - per Doppelklick aus dem
+Dateimanager geöffnet bleiben die Seiten leer, weil ES-Module von `file://`
+nicht laden (siehe "Frontend: ES-Module statt globaler Namen"):
+
+```bash
+cd ..                 # Wurzelverzeichnis, wo die HTML-Dateien liegen
+python3 -m http.server 8000
+```
+
+Dann `http://localhost:8000/index.html` öffnen. `js/api.js` erkennt
+`localhost` bzw. `127.0.0.1` am Hostnamen und spricht automatisch
+`http://localhost:8001` an.
+
 ## Deployment auf Render.com
 
 1. Repo mit Render verbinden, `backend/render.yaml` wird automatisch
@@ -421,12 +447,13 @@ API läuft dann unter `http://localhost:8001`, z.B.
 3. **Free-Tier-Einschränkung:** Render setzt kostenlose Web Services nach
    ~15 Minuten Inaktivität in den Schlafmodus - der Hintergrund-Scheduler
    pausiert dann ebenfalls, bis der nächste Request den Service aufweckt.
-   Für einen wirklich durchgängig aktuellen Newsfeed/Live-Ticker ist
-   mittelfristig ein kostenpflichtiger "Always On"-Plan nötig.
+   Für einen wirklich durchgängig aktuellen Newsfeed ist mittelfristig ein
+   kostenpflichtiger "Always On"-Plan nötig.
 4. Kein persistentes Disk-Volume im Free-Tier - der JSON-Cache geht bei
-   jedem Neustart/Deploy verloren. Unkritisch, da der Scheduler beim Start
-   sofort neu scraped (dauert wenige Sekunden bis Minuten, je nach Anzahl
-   Requests).
+   jedem Neustart/Deploy verloren. Das betrifft nur noch News (siehe
+   "Doppelstrukturen"), und unkritisch, weil der Scheduler beim Start
+   sofort neu scraped. Teams, Fahrer und Rennen liegen in Postgres und
+   sind davon nicht betroffen.
 5. **Python-Version ist auf 3.11 gepinnt** (`backend/.python-version`).
    Ohne diese Datei wählt Render standardmäßig die neueste Python-Version
    (aktuell 3.14), für die es noch kein vorgebautes Wheel für
@@ -447,9 +474,7 @@ API läuft dann unter `http://localhost:8001`, z.B.
 
 | Job | Takt | Zeitbudget | Pool | Was er tut |
 |---|---|---|---|---|
-| `refresh_teams` | 24 h | – | scrape | WorldTeams-Übersicht in den Cache |
-| `refresh_calendar` | 24 h | – | scrape | Saison-Kalender in den Cache |
-| `refresh_results` | 1 h | – | scrape | Ergebnisse gestarteter Rennen in den Cache |
+| `refresh_teams` | 24 h | – | scrape | WorldTeams-Übersicht in die `teams`-Tabelle |
 | `refresh_rosters` | 24 h | – | scrape | Kader aller Teams + UCI-Punkte-Platzhalter |
 | `refresh_rider_details` | 15 min | 120 s | scrape | Rückstand: Team-Historie, Strava |
 | `refresh_race_history` | 15 min | 600 s | scrape | Renn-Seeding und Detail-Backfill |
@@ -620,6 +645,191 @@ Schedulers (`history_fetched_at IS NULL`, `strava_checked_at IS NULL`) - für
 `races` gab es das Gegenstück schon, hier fehlte es. `EXPLAIN` zeigt jetzt
 einen Index Scan statt Seq Scan plus Sortierung über die ganze Tabelle.
 
+## Doppelstrukturen
+
+Ziel des Projekts ist, weitere und größere Datenbanken einzubinden -
+Frauen-Radsport, weiter zurückreichende Saisons. Jede Stelle, an der
+dieselbe Sache zweimal beschrieben ist, muss dabei zweimal erweitert
+werden, und die zweite Stelle wird vergessen. Dieser Abschnitt hält fest,
+welche Doppelungen aufgelöst wurden und wie.
+
+### Renn-Daten: ein Pfad statt zwei
+
+Rennen gab es zweimal im Baum:
+
+| | alter Pfad | Renn-Historie |
+|---|---|---|
+| Scraper | `scrapers/wikipedia_races.py` | `scrapers/wikipedia_race_history.py` |
+| Speicher | JSON-Cache (`app/cache.py`) | Postgres (`races`, `race_stages`, `race_results`) |
+| Modelle | `Race`, `CalendarEvent`, `RiderResult`, `LiveResult` | `RaceRecord`, `RaceStage`, `RaceResultEntry` |
+| Endpunkte | `/api/races`, `/api/calendar`, `/api/results` | `/api/race-history*` |
+| Umfang | aktuelle Saison | alle Saisons seit 2020 |
+| Jobs | `refresh_calendar`, `refresh_results` | `refresh_race_history` |
+
+Der alte Pfad ist entfallen. Er lieferte eine Teilmenge dessen, was die
+Renn-Historie ohnehin hat, und auf Renders Free-Plan war sein Speicher nach
+jedem Deploy leer - die Startseite zeigte dann einen leeren Kalender, bis
+der nächste Scraping-Lauf durch war. Zwei Scraper für dieselben
+Wikipedia-Seiten hieß außerdem: doppelte Wikipedia-Requests und zwei
+Stellen, an denen ein geändertes Tabellenlayout repariert werden muss.
+
+Vor dem Löschen geprüft, ob der neue Pfad den alten wirklich ersetzt: die
+Team-Statistik auf der Team-Detailseite brauchte die Team-Zuordnung der
+Ergebnisse. Beide Pfade benutzen denselben Zeilen-Parser
+(`parse_result_row`), `race_results.team_name` ist also zeichengleich mit
+dem, was im Cache unter `result.results[].team` stand. Die Statistik konnte
+damit 1:1 auf die Datenbank umziehen - und zählt seitdem richtig, siehe
+unten.
+
+`parse_result_row` und die Monatsnamen-Tabelle aus `wikipedia_races.py`
+braucht die Renn-Historie weiter; sie stehen jetzt in
+`scrapers/wikipedia_tables.py`. Die Funktion gibt dabei direkt ein
+`RaceResultEntry` zurück statt eines `RiderResult`, das der einzige
+Aufrufer anschließend Feld für Feld umkopiert hat - zwei Modelle für
+dieselbe Sache, eines davon weg.
+
+### Team-Statistik: richtig zählen statt im Browser raten
+
+Die Werte auf der Team-Detailseite (Siege/Podestplätze/Top-10) rechnete
+vorher `js/team.js::computeStats` über alle gecachten Ergebnisse. Mit
+`findIndex` fand es pro Rennen nur den besten Fahrer eines Teams. Folge:
+"Top-10-Platzierungen" waren *Rennen mit mindestens einer
+Top-10-Platzierung*, und zwei Podestplätze desselben Teams im selben
+Rennen zählten als einer.
+
+Jetzt rechnet `/api/teams/{id}/stats` das per `count(*) FILTER (WHERE ...)`
+über die Ergebniszeilen - also Platzierungen, wie das Label sagt.
+Etappenergebnisse sind enthalten. Nachgemessen an Testdaten mit sechs
+Ergebniszeilen für ein Team (Plätze 1, 9, 2, 2, 1, 1 über drei Rennen):
+3 Siege, 5 Podestplätze, 6 Top-10, 3 Rennen.
+
+### Teams: Tabelle statt Tabelle *und* JSON-Datei
+
+Die Teams lagen doppelt: `refresh_teams` schrieb sie in den JSON-Cache,
+`refresh_rosters` kopierte sie von dort zusätzlich in die
+`teams`-Tabelle. `/api/teams` las den Cache, `/api/teams/{id}/stats` die
+Tabelle. Zwei Quellen, die auseinanderlaufen konnten - und auf Renders
+Free-Plan nach jedem Deploy genau das taten, weil der Cache auf dem
+flüchtigen Dateisystem liegt und die Tabelle nicht.
+
+Jetzt schreibt `refresh_teams` direkt in die Tabelle und alle Leser lesen
+von dort. Die Tabelle ist die richtige Quelle: auf sie verweisen
+Fremdschlüssel aus `riders` und `rider_team_stints`, sie übersteht Deploys,
+und sie hat ein `category`-Feld, über das weitere Teams (Frauen-WorldTeams,
+ProTeams) hinzukommen können.
+
+`app/cache.py` bedient damit nur noch News. Das ist eine Entscheidung, die
+Begründung steht im Modul-Docstring: News sind ein flacher RSS-Auszug, auf
+den nichts verweist und dessen Verlust kein Datenverlust ist (der Feed
+liefert sie beim nächsten Lauf wieder), und sie sind das Einzige, was die
+Seite ohne Datenbank noch anzeigen kann. Dort steht auch, dass die
+JSON-Persistenz auf dem Free-Plan nichts bringt - wirksam ist nur der
+In-Memory-Anteil.
+
+### Eine Stelle für `slugify`
+
+`slugify` erzeugt die Primärschlüssel: `rider_id`, `team_id` und über
+`db_races.race_id_for` auch `race_id`. Die Funktion stand dreimal im Baum
+(`scrapers/wikipedia_teams.py`, `scrapers/wikipedia_riders.py`,
+`db_races.py`) plus eine vierte, tote Kopie in
+`scrapers/wikipedia_race_history.py`. Jetzt steht sie in `app/text.py`.
+
+Weil ihr Ergebnis in der Datenbank steht, darf sie sich nicht verhalten
+ändern: eine andere Ausgabe hieße neue IDs für bestehende Zeilen, und der
+nächste Upsert legt Dubletten an statt zu aktualisieren. Nachgewiesen, dass
+alte und neue Fassung zeichengleich sind - über 72 echte Namen
+(Teamnamen, Fahrernamen mit Umlauten/Akzenten/Apostrophen wie
+"Giro d'Italia", Rennnamen mit Halbgeviertstrich wie "Milan–San Remo",
+dazu Grenzfälle: leerer String, nur Striche, Emoji, geschützte
+Leerzeichen) und über 20.000 zufällige Zeichenfolgen aus einem Alphabet
+mit genau diesen Sonderzeichen. Null Abweichungen.
+
+Was `slugify` **nicht** tut: Umlaute und Akzente transliterieren. "Tobias
+Müller" wird `tobias-m-ller`, nicht `tobias-mueller`. Das ist unschön, aber
+es ist der Stand, auf dem die vorhandenen Zeilen beruhen; eine Änderung
+braucht eine Migration, die die alten IDs mitnimmt (Befund 7, stabile
+Fahrer-IDs).
+
+### Grand Tours: eine Liste, im Backend
+
+Die Einordnung "ist eine Grand Tour" gab es zweimal, und beide Kopien
+waren je anders falsch:
+
+- `wikipedia_races.GRAND_TOURS` verglich Slugs:
+  `{"tour-de-france", "giro-d-italia", "vuelta-a-espana"}`. Der Slug von
+  "Vuelta a España" ist aber `vuelta-a-espa-a` - die Vuelta fiel durch,
+  sobald Wikipedia den Namen mit Akzent schrieb.
+- `js/races.js::GRAND_TOUR_NAMES` verglich Anzeigenamen und führte beide
+  Vuelta-Schreibweisen auf - an dieser Stelle also richtig, dafür im
+  Frontend, wo es beim Erweitern der Datenbank niemand sucht.
+
+Jetzt eine Liste in `app/race_meta.py`, verglichen über den Slug (der macht
+aus Halbgeviertstrich, Bindestrich und Apostroph-Varianten dasselbe
+Zeichen), mit beiden Slug-Varianten für akzentbehaftete Namen. Die
+Frauen-Pendants (Tour de France Femmes, Giro d'Italia Women, La Vuelta
+Femenina) stehen mit drin, damit sie nicht später im Frontend nachgetragen
+werden müssen. Die fünf Monumente sind aus `wikipedia_races.py` mit
+übernommen; sie sind noch von keinem Endpunkt ausgewertet.
+
+`RaceRecord.is_grand_tour` wird beim Lesen aus dem Namen bestimmt
+(`db_races._row_to_race`), ist also **keine** Tabellenspalte. Damit wirkt
+eine neue Zeile in der Liste sofort für alle Saisons, auch die längst
+gescrapten, und braucht keine Migration (die es noch nicht gibt, Befund
+10). Der CSV-Export führt das Feld nicht - er spiegelt die
+Tabellenspalten, und die Liste als `CASE`-Ausdruck in SQL zu wiederholen
+wäre genau die Doppelung, die hier verschwindet.
+
+**Nicht geprüft:** gegen welche Namen die `races`-Tabelle in der
+Render-Datenbank tatsächlich gefüllt ist - sie ist aus der
+Entwicklungsumgebung nicht erreichbar. Der Abgleich ist eine Zeile SQL:
+`SELECT DISTINCT name FROM races ORDER BY name;`
+
+### Frontend-Helfer in `js/ui.js`
+
+Vierfach kopiert war die Datums-Formatierung (races.js zweimal, team.js,
+riders.js) - alle vier mit demselben Zeitzonen-Fehler, siehe
+"Kalenderdaten" in `js/ui.js`. Dazu kamen:
+
+- `errorPanel` dreifach (races.js, rider.js, team.js) in zwei
+  verschiedenen Fassungen: die in races.js nahm einen `detail`-Parameter
+  und zeigte ohne ihn "Bitte später erneut versuchen.", die anderen
+  kannten ihn nicht. In `js/ui.js` steht die Fassung mit `detail`, aber
+  ohne Vorgabetext: bei "Dieser Fahrer wurde nicht gefunden." hilft
+  Erneut-Versuchen nicht. Die zwei Aufrufe in races.js, die den Satz
+  wirklich wollen, übergeben ihn jetzt selbst.
+- die Initialen für die Logo-Kreise zweifach mit **zwei verschiedenen
+  Trennregeln**. Das ist kein Versehen: Teamnamen trennen am Strich
+  ("Bahrain–Victorious" -> "BV"), Personennamen nicht
+  ("Jean-Pierre Drucker" -> "JD", nicht "JP"). Deshalb stehen in
+  `js/ui.js` zwei Funktionen (`teamInitials`, `riderInitials`) über einem
+  gemeinsamen Kern, nicht eine.
+
+Dabei aufgefallen und mit behoben: beim Umbau von `js/team.js` auf
+`/api/teams/{id}/stats` waren dessen lokale Kopien von `errorPanel` und
+`initials` entfallen, ohne ersetzt zu werden - und `team.html` lädt kein
+Skript, das sie mitbrachte. Die Team-Detailseite lief damit in einen
+`ReferenceError`. Dass so etwas überhaupt unbemerkt passieren kann, liegt am
+globalen Namensraum - dagegen siehe "Frontend: ES-Module statt globaler
+Namen".
+
+`js/team.js` holt das Team jetzt über `GET /api/teams/{id}` statt die
+komplette Team-Liste zu laden und darin mit `find()` zu suchen. Damit das
+"nicht gefunden" von "gerade kaputt" unterscheidbar bleibt, hängt
+`apiGet` den HTTP-Status als `.status` an den Error.
+
+### Nie gesetzte Felder entfernt
+
+`Team.riders`, `Team.wins_season` und `Team.website` setzte der Scraper
+fest auf `None`, keine Abfrage las sie, und eine Spalte in der
+`teams`-Tabelle hatten sie auch nicht - Felder, die in der API-Antwort
+aussahen, als kämen da Daten. Die Fahrerzahl liefert
+`db.count_riders(team_id)`, die Siege `/api/teams/{id}/stats`.
+
+Gegengeprüft, dass es die einzigen waren: für jedes Feld aller elf
+Pydantic-Modelle gezählt, wie oft sein Name außerhalb von `models.py` in
+`.py`- und `.js`-Dateien vorkommt. Außer diesen drei keines mit null
+Treffern.
+
 ## Datenqualität
 
 ### Eine Zeile pro Fahrer und Saison
@@ -649,8 +859,10 @@ liess den Stint still verschwinden, ohne Log-Eintrag - bei mehr Historie
 (alte Artikel sind uneinheitlicher formatiert) führt das zu unsichtbaren
 Lücken. `app/text.py::normalize_dashes` vereinheitlicht jetzt alle sieben
 Strich-Varianten (U+2010 bis U+2015, U+2212) sowie geschützte Leerzeichen,
-und zwar für **alle drei** Parser: `wikipedia_riders`, `wikipedia_races` und
+und zwar für beide verbliebenen Parser: `wikipedia_riders` und
 `wikipedia_race_history` machten das vorher unterschiedlich oder gar nicht.
+(Ein dritter, `wikipedia_races`, ist seitdem entfallen - siehe
+"Doppelstrukturen".)
 
 Nicht erkannte Labels werden jetzt auf `DEBUG` geloggt statt stumm
 verworfen. `2019/20` bleibt bewusst unerkannt: dieses Format gehört zu den
@@ -833,6 +1045,142 @@ Optionaler Zugriffsschutz: ist `EXPORT_TOKEN` gesetzt, verlangen alle
 Export-Routen `Authorization: Bearer <token>` (Vergleich per
 `secrets.compare_digest`). Ohne die Variable bleiben sie offen wie bisher.
 
+## Frontend: ES-Module statt globaler Namen
+
+Die sechs Seiten laden ihr JavaScript jetzt als ES-Modul - ein Tag pro
+Seite, alles andere zieht das Modul per `import` selbst:
+
+```html
+<script type="module" src="js/teams.js"></script>
+```
+
+Vorher lud jede Seite vier bis fünf klassische `<script src>`-Tags, und die
+Abhängigkeiten dazwischen liefen über globale Namen, ohne dass sie irgendwo
+deklariert waren:
+
+- `js/riders.js` braucht `escapeHtml`/`safeUrl` aus `js/api.js`
+- `js/team.js` braucht `renderTeamRoster` aus `js/riders.js`
+- `js/teams.js` braucht `initRidersTab` aus `js/riders.js`
+- alle Seiten brauchen `renderNav` aus `js/nav.js`
+
+Die einzige Absicherung war die Reihenfolge der Tags in sechs HTML-Dateien.
+Was dabei schiefgeht, ist belegt: `initials` existierte zweimal, in
+`js/teams.js` und `js/team.js`. Dass die eine Definition die andere nie
+überschrieben hat, lag allein daran, dass die beiden Dateien nie auf
+derselben Seite liegen. Und als `js/team.js` seine Kopien verlor, lief die
+Team-Detailseite in einen `ReferenceError` - ohne dass irgendeine Prüfung
+das gemerkt hätte, weil die Syntax ja in Ordnung war.
+
+Mit Modulen ist jede Abhängigkeit deklariert, und ein falscher Name ist ein
+harter Fehler beim Verlinken statt eines stillen `undefined`. Der Graph:
+
+```
+api.js  (keine Abhängigkeiten)
+  ui.js
+    nav.js
+    riders.js
+      home.js  news.js  races.js  rider.js  team.js  teams.js
+```
+
+Exportiert wird nur, was eine andere Datei braucht: `apiGet` und `API_BASE`
+bleiben in `api.js`, `parseCalendarDate` und `initialsFrom` in `ui.js`.
+
+### Drei Stolperstellen, die dabei geprüft wurden
+
+**Einstiegspunkt.** Module werden deferred ausgeführt: sie laufen, wenn das
+HTML geparst ist, aber bevor `DOMContentLoaded` feuert. Ein
+`addEventListener('DOMContentLoaded', ...)` im Modul greift damit noch - aber
+nur, weil die Reihenfolge zufällig passt. Wer das Modul später per
+`import()` nachlädt, bekommt eine Seite, die stumm nichts tut. Die sechs
+Seiten-Module benutzen deshalb `ui.starten()`, das den Zustand prüft
+(`document.readyState`) statt auf ein Ereignis zu hoffen, das vielleicht
+schon durch ist.
+
+**Inline-Handler.** Inline-Attribute können keine Modul-Bindings sehen. Im
+Baum gibt es vier, alle geprüft:
+
+| Stelle | Handler | Braucht eine Modul-Funktion? |
+|---|---|---|
+| `js/riders.js` (2x) | `onclick="event.stopPropagation()"` | nein |
+| `js/teams.js`, `js/team.js` | `onerror="this.parentElement.textContent='XY'"` | nein - die Initialen stehen beim Rendern schon als Literal im Attribut |
+
+Alle vier bleiben damit gültig. Käme einer dazu, der doch eine
+Modul-Funktion aufruft, gehört er auf `addEventListener` umgebaut.
+
+**GitHub Pages.** Läuft ohne Build-Schritt: Pages liefert `.js` als
+`text/javascript` (Module brauchen genau das), die Importe sind relativ und
+mit Dateiendung geschrieben (`./api.js`, nicht `./api`), und `.nojekyll`
+liegt im Wurzelverzeichnis, damit `js/` nicht angetastet wird. Kein Bundler,
+kein npm, kein TypeScript.
+
+Was **nicht** mehr geht: die Seiten per Doppelklick aus dem Dateimanager
+öffnen. Module unterliegen CORS und laden von `file://` grundsätzlich nicht -
+man sieht eine leere Seite. Lokal braucht es einen HTTP-Server, siehe
+nächster Abschnitt.
+
+### Seiten im Browser prüfen
+
+`scripts/check-pages.mjs` lädt alle sechs Seiten in Chromium und prüft vier
+Dinge pro Seite: kein JavaScript-Fehler (das fängt fehlgeschlagene Importe
+und `ReferenceError`s), kein fehlgeschlagener Request auf eine eigene Datei,
+die Seite hat wirklich gerendert (ein erwarteter Text muss im sichtbaren
+Text stehen - ohne das besteht auch eine Seite den Test, die stumm nichts
+tut), und kein Helfer hängt mehr am globalen `window`.
+
+```bash
+# Backend
+cd backend && DATABASE_URL=... python3 -m uvicorn app.main:app --port 8001 &
+# Statische Dateien - NICHT per file://, siehe oben
+python3 -m http.server 8000 &
+node scripts/check-pages.mjs
+```
+
+Externe Quellen (Font-Awesome-CDN, Google Fonts, Wikimedia-Logos) übergeht
+der Test: sie sind in abgeschotteten Umgebungen nicht erreichbar und sagen
+nichts über den Code.
+
+Dazu zwei statische Prüfungen ohne Browser:
+
+```bash
+node scripts/check-js-modules.mjs     # ein Modul-Tag pro Seite, jeder import trifft ein export, keine toten Exporte
+python3 scripts/check-env-example.py  # .env.example gegen die im Code gelesenen Variablen
+```
+
+`check-js-modules.mjs` nutzt aus, dass Node einen falschen Import-Namen beim
+**Verlinken** des Modulgraphen meldet - also bevor irgendein Modulrumpf
+läuft. Deshalb funktioniert die Prüfung, obwohl die Module beim Ausführen
+`window` und `document` brauchen.
+
+Gegengeprobt, dass die Prüfungen greifen: ein absichtlich falscher
+Import-Name (`renderTeamRosterXX`) wird von `check-js-modules.mjs` und von
+`check-pages.mjs` gemeldet; ein `<script>`-Tag ohne `type="module"` ebenso.
+`scripts/check-js-helpers.mjs` aus dem vorherigen Schritt ist entfallen - es
+prüfte, ob eine Seite das richtige Skript lädt, und genau das ist mit
+Modulen deklariert.
+
+### `.env.example` gegen den Code
+
+`scripts/check-env-example.py` liest die Umgebungsvariablen per AST aus
+`backend/app/` (`os.environ.get`, `os.getenv`, `os.environ[...]`) und meldet
+drei Dinge:
+
+- **FEHLT** - der Code liest sie, `.env.example` kennt sie nicht. Folge: sie
+  wird beim Deployen vergessen. Genau so lief der Service am 12.09.2026 ohne
+  `DATABASE_URL`: die App startet dann und liefert leere Listen, statt sich
+  zu beschweren (dagegen gibt es inzwischen `REQUIRE_DATABASE`).
+- **ÜBERZÄHLIG** - steht in `.env.example`, wird nirgends gelesen. Folge:
+  jemand setzt sie und wundert sich. Entstand nach dem Abbau des alten
+  Renn-Pfades (`REFRESH_INTERVAL_CALENDAR`, `REFRESH_INTERVAL_RESULTS`).
+- **ABWEICHUNG** - der Beispielwert ist nicht der Code-Default. Vier
+  Variablen weichen absichtlich ab (`CORS_ORIGINS` braucht die
+  GitHub-Pages-Adresse, `BACKUP_KEEP=7` ist ein Vorschlag für den Cron-Job,
+  `CACHE_DIR`/`BACKUP_DIR` sind relative Schreibweisen desselben
+  Verzeichnisses). Die stehen namentlich mit Begründung in
+  `ABSICHTLICH_ANDERS` im Skript - nicht als Kommentar in `.env.example`,
+  weil eine Kommentar-Heuristik jede Abweichung stumm durchgelassen hätte
+  (nachgemessen: ein auf `5/minute` verfälschtes `RATE_LIMIT_DEFAULT` wurde
+  von der Kommentar-Variante nicht gemeldet, von der Liste schon).
+
 ## Backup (`app/backup.py`)
 
 **Warum das nötig ist:** Die Produktionsdatenbank läuft auf Renders
@@ -934,26 +1282,35 @@ cd backend && python -m app.backup dump --keep 2 && \
 
 | Endpunkt | Beschreibung |
 |---|---|
-| `GET /api/teams?category=wt\|pro\|cont` | Alle Teams, optional gefiltert |
-| `GET /api/races` | Rennkalender (Saison) |
-| `GET /api/calendar` | Kalenderansicht (ein Eintrag pro Rennstart) |
-| `GET /api/results?status=live\|finished\|upcoming` | (Live-)Ergebnisse |
+| `GET /api/teams?category=wt` | Alle Teams aus der `teams`-Tabelle, optional gefiltert |
+| `GET /api/teams/{id}` | Ein Team |
+| `GET /api/teams/{id}/stats?season=` | Siege, Podestplätze und Top-10-Platzierungen des Teams in einer Saison, plus die Liste der Siege |
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
-| `GET /api/riders?team=<team_id>` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
+| `GET /api/riders?team=<team_id>&limit=&offset=` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
 | `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (rohe Team-Zeiträume) und `seasons` (pro Saison abgeleiteter Team-Link, siehe "Vor-/Nachname, Saison-Team-Links, Strava-Profile" oben) |
 | `GET /api/race-history?season=&category=wt\|proseries\|continental&circuit=africa\|asia\|europe\|america\|oceania&limit=&offset=` | Renn-Historie seit 2020, gefiltert/paginiert, ohne Ergebnisse/Etappen (siehe "Renn-Historie" oben) |
+| `GET /api/race-history/seasons` | Alle Saisons, für die Rennen vorliegen |
 | `GET /api/race-history/{id}` | Ein Rennen inkl. `results` (Top 10+) und bei Mehretagenrennen `stages[]` (je Etappe eigene `results`) |
-| `GET /api/health` | Health-Check |
+| `GET /api/health` | Health-Check (nicht gedrosselt) |
 
-Da die Teams-Quelle (Wikipedia) nur WorldTeams abdeckt, liefert
-`category=pro` und `category=cont` aktuell immer eine leere Liste.
+`category` bei `/api/teams` akzeptiert nur `wt`: die Quelle
+(Wikipedia-Artikel "UCI World Tour") listet ausschließlich WorldTeams.
+Vorher nahm der Parameter zusätzlich `pro` und `cont` an und lieferte dafür
+immer eine leere Liste - ein Filter, der aussah als funktioniere er.
 
-Die `/api/riders*`- und `/api/race-history*`-Endpunkte liefern
-`{"riders": [], "error": "..."}` bzw. `{"races": [], "error": "..."}` (Liste)
-oder HTTP 503 (Detail), solange `DATABASE_URL` nicht gesetzt ist (siehe
-"Fahrer-Datenbank"/"Renn-Historie" oben) - kein `last_updated`, da sie
-nicht über den Cache-Mechanismus laufen.
+**Entfallen:** `GET /api/races`, `GET /api/calendar` und
+`GET /api/results`. Sie bedienten einen zweiten Renn-Datenpfad aus dem
+flüchtigen Cache; die Renn-Historie deckt dasselbe ab. Siehe "Renn-Daten:
+ein Pfad statt zwei".
 
-Jede Antwort enthält zusätzlich `last_updated` (ISO-Timestamp des letzten
-erfolgreichen Scraping-Laufs) und `error` (Fehlermeldung des letzten
-Versuchs, `null` falls erfolgreich).
+Alle Listen-Endpunkte (`/api/teams`, `/api/riders`, `/api/race-history`,
+`/api/news`) antworten auch bei fehlender Datenbank mit HTTP 200 und
+`error` im Rumpf; die Detail-Endpunkte (`/api/teams/{id}`,
+`/api/riders/{id}`, `/api/race-history/{id}`) mit HTTP 503. Der Unterschied
+ist Absicht: `js/home.js` holt vier Listen in einem `Promise.all`, und eine
+503 daraus würde alle vier Kacheln leer lassen statt nur der betroffenen.
+
+`last_updated` liefern `/api/teams` (jüngster Wert aus
+`teams.last_updated`) und `/api/news` (Zeitpunkt des letzten
+erfolgreichen Scraping-Laufs aus `app/cache.py`). Die übrigen Endpunkte
+haben kein `last_updated`.
