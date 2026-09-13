@@ -29,6 +29,7 @@ from datetime import date, datetime
 from bs4 import BeautifulSoup
 
 from ..config import RACE_SEASON_YEAR
+from ..text import normalize_dashes
 from ..models import LiveResult, Race, RiderResult
 from .wikipedia import fetch_section
 
@@ -59,7 +60,7 @@ def _classify_type(slug: str, is_multi_day: bool) -> str:
 
 
 def _parse_date_range(text: str, year: int) -> tuple[str, str] | None:
-    text = text.replace("–", "-").replace("—", "-").strip()
+    text = normalize_dashes(text).strip()
 
     match = re.match(r"^(\d{1,2})\s*-\s*(\d{1,2})\s+([A-Za-z]+)$", text)
     if match:

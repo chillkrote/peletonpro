@@ -1,19 +1,119 @@
+# Render-Blueprint für PelotonPro.
+#
+# ACHTUNG - diese Datei beschreibt NICHT den laufenden Service.
+#
+# Der Service `peletonpro-api` (srv-dai0tb2jnfac73afvq70) wurde von Hand im
+# Dashboard angelegt und ist nicht Blueprint-verwaltet. Render kann einen
+# bestehenden, manuell erstellten Service auch nicht nachträglich einem
+# Blueprint unterstellen - ein Blueprint erzeugt immer neue Services. Diese
+# Datei hat damit zwei Zwecke:
+#
+#   1. Dokumentation der vollständigen, richtigen Konfiguration.
+#   2. Vorlage für einen Neuaufbau (anderes Konto, Staging, Wiederherstellung
+#      nach dem Ablauf der kostenlosen Datenbank).
+#
+# Wer sie anwendet, bekommt einen ZWEITEN Service neben dem bestehenden.
+#
+# Sie war vorher zusätzlich falsch: sie deklarierte `rootDir: backend` mit
+# `buildCommand: pip install -r requirements.txt`, während der laufende
+# Service `rootDir: ""` mit `cd backend && pip install -r requirements.txt`
+# benutzt; DATABASE_URL fehlte ganz (kein fromDatabase-Eintrag), ebenso
+# healthCheckPath und alle RACE_HISTORY_*-Variablen. Jetzt spiegelt sie den
+# Ist-Zustand des Services plus die Variablen, die er braucht.
+
+databases:
+  - name: peletonpro-db
+    databaseName: peletonpro_db
+    user: peletonpro_db_user
+    region: frankfurt
+    # ACHTUNG: der kostenlose Postgres-Plan läuft 30 Tage nach Anlage
+    # ersatzlos ab und lässt sich danach nicht mehr upgraden. Für alles, was
+    # der Bestand wert ist, gehört hier ein bezahlter Plan hin - siehe
+    # backend/README.md, Abschnitt "Backup".
+    plan: free
+
 services:
   - type: web
     name: peletonpro-api
     runtime: python
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    region: frankfurt
+    branch: main
+    # rootDir bleibt leer und die Kommandos wechseln selbst nach backend/ -
+    # so wie der laufende Service konfiguriert ist.
+    rootDir: ""
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Ohne Health Check merkt Render einen kaputten Start nicht und lässt eine
+    # tote Instanz laufen. Der Pfad lautet /api/health - NICHT /health: ein
+    # falscher Pfad lässt jeden Deploy an einer 404-Antwort scheitern, während
+    # der alte Deploy weiterläuft und Produktion stillschweigend hinterherhinkt.
+    healthCheckPath: /api/health
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: peletonpro-db
+          property: connectionString
+      # In Produktion soll der Start abbrechen, wenn DATABASE_URL fehlt,
+      # statt leise leere Fahrer- und Renn-Listen auszuliefern (siehe
+      # app/config.py, REQUIRE_DATABASE).
+      - key: REQUIRE_DATABASE
+        value: "1"
       - key: CORS_ORIGINS
         value: https://chillkrote.github.io
       - key: RACE_SEASON_YEAR
         value: "2026"
-    # Hinweis: Render's kostenloser Plan hat kein persistentes Disk-Volume -
-    # der JSON-Cache unter CACHE_DIR geht bei jedem Deploy/Neustart verloren.
-    # Das ist unkritisch, da der Scheduler beim Start sofort neu scraped.
-    # Für echte Persistenz über Neustarts hinweg: kostenpflichtigen Plan mit
-    # "disk:"-Block verwenden (siehe Render-Docs) oder auf eine externe DB
-    # (z.B. Render Postgres) umstellen.
+      - key: RACE_HISTORY_START_YEAR
+        value: "2020"
+      # Hintergrund-Jobs: Takte und Zeitbudgets, siehe backend/README.md,
+      # Abschnitt "Hintergrund-Jobs".
+      - key: REFRESH_INTERVAL_ROSTERS
+        value: "86400"
+      - key: REFRESH_INTERVAL_RIDER_DETAILS
+        value: "900"
+      - key: RIDER_DETAILS_RUN_SECONDS
+        value: "120"
+      - key: REFRESH_INTERVAL_RACE_HISTORY
+        value: "900"
+      - key: RACE_HISTORY_RUN_SECONDS
+        value: "600"
+      # Verbindungs-Pool klein halten - der kostenlose Postgres-Plan hat ein
+      # knappes Verbindungskontingent (siehe app/db.py).
+      - key: DB_POOL_MAX_SIZE
+        value: "5"
+    # Hinweis zum JSON-Cache unter CACHE_DIR: der kostenlose Plan hat kein
+    # persistentes Disk-Volume, der Cache geht bei jedem Deploy verloren. Das
+    # ist unkritisch - über den Cache laufen nur noch Teams, Kalender,
+    # Ergebnisse und News, die der Scheduler beim Start neu holt. Fahrer und
+    # Renn-Historie liegen in Postgres und sind davon nicht betroffen.
+
+# Bestandsaufbau als Cron Job: der Renn-Detail-Backfill braucht durchgängige
+# Laufzeit, die eine kostenlose Web-Instanz nicht liefert (sie schläft nach
+# ~15 Minuten ohne Requests ein und nimmt den Scheduler-Thread mit).
+# Absichtlich auskommentiert - ein Cron Job auf dem kostenlosen Plan ist
+# nicht verfügbar, und ohne persistentes Disk müsste das Backup im selben
+# Command weitergeschoben werden (siehe README, Abschnitt "Backup").
+#
+#  - type: cron
+#    name: peletonpro-backfill
+#    runtime: python
+#    schedule: "*/20 * * * *"
+#    buildCommand: cd backend && pip install -r requirements.txt
+#    command: cd backend && python -m app.scheduler refresh_race_history
+#    envVars:
+#      - key: DATABASE_URL
+#        fromDatabase:
+#          name: peletonpro-db
+#          property: connectionString
+#
+#  - type: cron
+#    name: peletonpro-backup
+#    runtime: python
+#    schedule: "0 3 * * *"
+#    buildCommand: cd backend && pip install -r requirements.txt
+#    command: cd backend && python -m app.backup dump --keep 7
+#    envVars:
+#      - key: DATABASE_URL
+#        fromDatabase:
+#          name: peletonpro-db
+#          property: connectionString

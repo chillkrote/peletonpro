@@ -25,6 +25,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import RiderHistory, RiderStint, RosterRider, Team
+from ..text import normalize_dashes
 from .wikipedia import fetch_lead_section, fetch_section, wiki_title_from_url
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,11 @@ def fetch_team_roster(team_wiki_title: str) -> list[RosterRider]:
 
 
 def _parse_year_range(text: str) -> tuple[int, int | None] | None:
-    text = text.strip()
+    """Zeitraum aus einem Infobox-Label, z.B. "2017-2018", "2019-" oder
+    "2020". Striche und geschützte Leerzeichen werden vorher normalisiert
+    (siehe app/text.py): YEAR_RANGE_RE kannte nur Halbgeviert- und
+    Bindestrich, ein Geviertstrich liess den Stint still verschwinden."""
+    text = normalize_dashes(text).strip()
     match = YEAR_RANGE_RE.match(text)
     if match:
         start = int(match.group(1))
@@ -149,9 +154,16 @@ def parse_rider_history(html: str) -> RiderHistory:
                 continue
             link = data_td.select_one("a")
             if link is None:
+                logger.debug("Infobox-Zeile ohne Team-Link übersprungen: %r",
+                             label_th.get_text(strip=True))
                 continue
-            years = _parse_year_range(label_th.get_text(strip=True))
+            label_text = label_th.get_text(strip=True)
+            years = _parse_year_range(label_text)
             if years is None:
+                # Vorher stumm verworfen. Eine unbekannte Format-Variante ist
+                # die wahrscheinlichste Ursache dafür, dass eine Station in
+                # der Historie fehlt - das soll auffallen können.
+                logger.debug("Zeitraum nicht erkannt, Stint übersprungen: %r", label_text)
                 continue
             start_year, end_year = years
             stints.append(

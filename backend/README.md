@@ -445,15 +445,86 @@ API läuft dann unter `http://localhost:8001`, z.B.
 
 ## Hintergrund-Jobs
 
-| Job | Takt | Was er tut |
-|---|---|---|
-| `refresh_teams` | 24 h | WorldTeams-Übersicht in den Cache |
-| `refresh_calendar` | 24 h | Saison-Kalender in den Cache |
-| `refresh_results` | 1 h | Ergebnisse gestarteter Rennen in den Cache |
-| `refresh_rosters` | **24 h** | Kader aller Teams in die Datenbank + UCI-Punkte-Platzhalter |
-| `refresh_rider_details` | 3 min | Rückstand: Team-Historie und Strava-Abgleich |
-| `refresh_race_history` | 3 min | Renn-Seeding und Detail-Backfill |
-| `refresh_news` | 15 min | RSS-Feeds |
+| Job | Takt | Zeitbudget | Pool | Was er tut |
+|---|---|---|---|---|
+| `refresh_teams` | 24 h | – | scrape | WorldTeams-Übersicht in den Cache |
+| `refresh_calendar` | 24 h | – | scrape | Saison-Kalender in den Cache |
+| `refresh_results` | 1 h | – | scrape | Ergebnisse gestarteter Rennen in den Cache |
+| `refresh_rosters` | 24 h | – | scrape | Kader aller Teams + UCI-Punkte-Platzhalter |
+| `refresh_rider_details` | 15 min | 120 s | scrape | Rückstand: Team-Historie, Strava |
+| `refresh_race_history` | 15 min | 600 s | scrape | Renn-Seeding und Detail-Backfill |
+| `refresh_news` | 15 min | – | default | RSS-Feeds |
+
+### Ein Worker für alles, was Wikipedia abfragt
+
+Der `scrape`-Pool hat genau **einen** Worker. Parallelität bringt dort nichts:
+`scrapers/http.py` lässt ohnehin nur einen Request alle
+`SCRAPER_REQUEST_DELAY_SECONDS` pro Host durch. Zwei gleichzeitige
+Wikipedia-Jobs haben sich deshalb nur gegenseitig ausgebremst - jeder lief
+doppelt so lange, beide überschritten ihr Intervall, und APScheduler verwarf
+die nächsten Läufe (`maximum number of running instances reached`, belegt in
+den Render-Logs vom 12.09.). Der Newsfeed läuft im `default`-Pool, weil er
+andere Hosts anspricht und nicht hinter den Wikipedia-Jobs warten soll.
+
+**Achtung bei der Umstellung auf einen Worker:** ein Job, der auf den Worker
+wartet, startet später als geplant - und APSchedulers Default
+(`misfire_grace_time=1s`) verwirft ihn dann komplett. In einem Testlauf lief
+`refresh_rider_details` dadurch **gar nicht mehr**, es war nur eine andere
+Art, Läufe zu verlieren. Deshalb ist `misfire_grace_time` auf das jeweilige
+Intervall gesetzt: eine Verspätung von bis zu einem Intervall ist hier
+unkritisch, besser spät als nie. Dazu ein Startversatz
+(`JOB_START_STAGGER_SECONDS`), damit sich beim Hochfahren nicht alle Jobs
+gleichzeitig anstellen.
+
+### Zeitbudget statt fester Batch-Größe
+
+Die beiden Rückstands-Jobs arbeiten sich durch eine Warteschlange von Stunden
+bis Tagen. Vorher holten sie eine feste Zahl Einträge pro Lauf - die Laufzeit
+hing damit vom Inhalt ab (ein Etappenrennen kostet ein Vielfaches an Abrufen
+gegenüber einem Eintagesrennen) und lag regelmäßig über dem Intervall.
+
+Jetzt arbeiten sie, solange Budget übrig ist (`scheduler.Budget`). Die
+Batch-Größe ist nur noch das Abfrage-Fenster, die Laufzeit bestimmt das
+Budget - und bleibt damit vorhersagbar unter dem Intervall.
+
+Zwei Fallstricke, die dabei einzubauen waren:
+
+- Ein fehlgeschlagener Eintrag behält `results_fetched_at`/`history_fetched_at`
+  auf `NULL` und käme in der nächsten Batch-Abfrage **desselben Laufs** sofort
+  wieder. Ohne Gegenmaßnahme verbrennt der Job sein Budget auf denselben
+  kaputten Seiten. Beide Schleifen merken sich die versuchten IDs.
+- Das Abfrage-Fenster muss um die bereits versuchten wachsen
+  (`limit=batch + len(attempted)`), sonst liefert die Abfrage immer wieder
+  dieselben gescheiterten Einträge und der Lauf kommt nie an ihnen vorbei.
+  Getestet mit 20 dauerhaft kaputten Rennen vor 23 intakten: die intakten
+  werden abgearbeitet, nur die kaputten bleiben offen.
+
+### Einen Job einzeln ausführen
+
+```bash
+cd backend
+python -m app.scheduler refresh_race_history
+```
+
+Greift auf dieselbe `JOBS`-Liste zu wie der Scheduler - es gibt also keine
+zweite Registrierung, die auseinanderlaufen kann.
+
+**Wofür das gedacht ist:** Der Renn-Backfill braucht durchgängige Laufzeit,
+die eine kostenlose Web-Instanz nicht liefert - Render setzt sie nach ~15
+Minuten ohne Requests schlafen, und der Scheduler-Thread pausiert mit. Der
+richtige Ort für den Bestandsaufbau ist deshalb ein **Render Cron Job** oder
+ein Background Worker, nicht ein Thread im Webserver:
+
+| Feld | Wert |
+|---|---|
+| Build Command | `cd backend && pip install -r requirements.txt` |
+| Command | `cd backend && python -m app.scheduler refresh_race_history` |
+| Schedule | z.B. `*/20 * * * *` |
+| Env: `DATABASE_URL` | aus `peletonpro-db` |
+| Env: `RACE_HISTORY_RUN_SECONDS` | passend zum Schedule wählen |
+
+Solange das nicht eingerichtet ist, läuft der Backfill nur, wenn die
+Web-Instanz wach ist.
 
 `refresh_rosters` und `refresh_rider_details` waren bis vor Kurzem **ein**
 Job (`refresh_riders`) mit gemeinsamem Drei-Minuten-Takt. Das hieß: alle drei
@@ -548,6 +619,219 @@ Dazu zwei Teilindizes auf `riders` für die Rückstands-Abfragen des
 Schedulers (`history_fetched_at IS NULL`, `strava_checked_at IS NULL`) - für
 `races` gab es das Gegenstück schon, hier fehlte es. `EXPLAIN` zeigt jetzt
 einen Index Scan statt Seq Scan plus Sortierung über die ganze Tabelle.
+
+## Datenqualität
+
+### Eine Zeile pro Fahrer und Saison
+
+Ein Fahrer kann in EINEM Jahr in zwei Stints auftauchen: auf Wikipedia
+überlappt das Startjahr eines neuen Stints regelmäßig mit dem Endjahr des
+alten (Wechsel zum Saisonwechsel). Die frühere Python-Expansion erzeugte
+dafür zwei Zeilen für dasselbe Jahr - auf `rider.html` stand die Saison
+doppelt in der Tabelle "Karriere in der World Tour", und
+`rider_seasons.csv` enthielt sie zweimal.
+
+Reproduziert mit den Stints 2017–2018 (A), 2018–2020 (B), 2021– (C): 2018
+kam zweimal. Jetzt entdoppelt `DISTINCT ON (rider_id, year)` mit
+`ORDER BY ... start_year DESC` auf die Zeile des **späteren** Stints - 2018
+gehört also zu Team B. Das passt zu `rider_season_points`, das mit
+`PRIMARY KEY (rider_id, year)` ohnehin genau eine Zeile pro Jahr vorsieht;
+eine Darstellung mit zwei Teams pro Übergangsjahr hätte dort kein Ziel.
+
+`get_rider_seasons` und `export_seasons` teilen dafür **einen** SQL-Ausdruck
+(`_SEASONS_SQL`). Vorher existierte die Ableitung zweimal - und beide Kopien
+hatten denselben Fehler.
+
+### Striche in Wikipedia-Zeiträumen
+
+`YEAR_RANGE_RE` kannte nur Halbgeviert- und Bindestrich. Ein Geviertstrich
+liess den Stint still verschwinden, ohne Log-Eintrag - bei mehr Historie
+(alte Artikel sind uneinheitlicher formatiert) führt das zu unsichtbaren
+Lücken. `app/text.py::normalize_dashes` vereinheitlicht jetzt alle sieben
+Strich-Varianten (U+2010 bis U+2015, U+2212) sowie geschützte Leerzeichen,
+und zwar für **alle drei** Parser: `wikipedia_riders`, `wikipedia_races` und
+`wikipedia_race_history` machten das vorher unterschiedlich oder gar nicht.
+
+Nicht erkannte Labels werden jetzt auf `DEBUG` geloggt statt stumm
+verworfen. `2019/20` bleibt bewusst unerkannt: dieses Format gehört zu den
+Continental-Saison-*Seiten*, nicht zu Fahrer-Infoboxen - sollte es dort doch
+vorkommen, fällt es über das Log auf.
+
+> Die bereits geladenen Historien werden davon nicht rückwirkend
+> korrigiert. Ein Neuladen kostet einen Wikipedia-Abruf pro Fahrer (~517,
+> ratenlimitiert also gut eine halbe Stunde) und lässt sich bei Bedarf
+> anstossen mit:
+> `UPDATE riders SET history_fetched_at = NULL;`
+
+## Sicherheit
+
+### Keine internen Fehlertexte nach außen
+
+Die Router antworteten im Fehlerfall mit `str(exc)`. Bei einem
+psycopg-Verbindungsfehler enthält der Host, Port, Benutzernamen und
+Datenbanknamen - und das Frontend zeigt das `error`-Feld sichtbar an. Jetzt
+gehen ausschließlich feste Texte aus `app/routers/messages.py` nach außen,
+das Detail geht per `logger.exception` ins Log. Dazu ein globaler
+Exception-Handler in `app/main.py` für alles, was kein Router selbst
+behandelt.
+
+Geprüft mit einer absichtlich falschen `DATABASE_URL`
+(`postgresql://geheimuser:geheimpass@127.0.0.1:5599/...`): in keiner Antwort
+von `/api/riders`, `/api/race-history`, `/api/riders/{id}`,
+`/api/race-history/{id}` oder den Export-Routen tauchen Benutzer, Passwort,
+Host, Port, `psycopg` oder ein Traceback auf.
+
+### Begrenzte `limit`/`offset`
+
+`limit` und `offset` gingen ungeprüft in SQL - `?limit=999999999` war damit
+eine kostenlose Anfrage, die die Free-Instanz die volle Tabelle lesen, in
+Pydantic-Modelle gießen und serialisieren ließ; ein negatives `offset`
+erzeugte einen Postgres-Fehler, der über das `error`-Feld nach außen ging.
+
+Jetzt `Query(200, ge=1, le=500)` bzw. `Query(0, ge=0)`, analog für
+`/api/news` und `/api/riders`. Ungültige Werte werden mit 422 abgelehnt. Die
+Antwort nennt zusätzlich `total`, `limit` und `offset`, damit paginiert
+werden kann - `count_races`/`count_riders` teilen sich die WHERE-Klausel mit
+der Listen-Abfrage (`_race_filter`/`_rider_filter`), damit Filter und
+Gesamtzahl nicht auseinanderdriften, sobald eine Achse dazukommt.
+
+Das Frontend lädt `races.html` jetzt **pro Saison** statt alles auf einmal
+(vorher `limit=5000`). Die Saison-Liste kommt vom neuen leichten Endpunkt
+`GET /api/race-history/seasons` - vorher leitete das Frontend sie aus der
+kompletten Renn-Liste ab und musste die dafür laden.
+
+> Die `/seasons`-Route muss im Router **vor** `/{race_id}` stehen, sonst
+> matcht "seasons" als `race_id`.
+
+### Fremd-Stylesheets
+
+Alle sechs Seiten laden Font Awesome von `cdnjs.cloudflare.com` ohne
+`integrity`. Ein kompromittiertes CDN kann damit beliebiges CSS im Kontext
+der Seite ausführen - CSS reicht für Datenabfluss über Attribut-Selektoren
+und Hintergrundbild-URLs.
+
+Der Hash muss aus der echten Datei gebildet werden; ein geratener Wert
+blockiert das Stylesheet komplett und die Seiten verlieren alle Icons.
+`scripts/add-sri.sh` holt die Datei, prüft Grösse und Inhalt, bildet den
+SHA-384 und trägt `integrity` samt `crossorigin` in alle sechs Seiten ein -
+idempotent, also auch beim Versions-Upgrade erneut aufrufbar.
+
+Selbst-Hosten wäre die dauerhafte Lösung (21 tatsächlich benutzte Icons,
+gezählt über `grep -ohrE "fa-[a-z0-9-]+" *.html js/*.js`), ändert aber das
+Erscheinungsbild und ist ein eigener Schritt.
+
+**Google Fonts lässt sich nicht per SRI absichern:** Google liefert je nach
+User-Agent unterschiedliches CSS aus (verschiedene Font-Formate), der Hash
+ist also nicht stabil. Das Risiko ist der Art nach vergleichbar, der Weg
+dagegen wäre Selbst-Hosten der Schriften - bewusst nicht in diesem Schritt.
+
+### Rate Limiting
+
+Die API hat keine Authentifizierung, läuft auf einer einzigen Free-Instanz
+und hat teure Endpunkte. Ein Skript-Loop genügte, um Service und
+Verbindungskontingent lahmzulegen.
+
+Die Grenzen sind an echten Seitenaufrufen bemessen: Startseite 4 Requests,
+Team-Detail 4, Races 2 plus 1 pro aufgeklapptem Rennen. Ein Besucher, der
+zügig durchklickt, kommt auf 30-40 in wenigen Minuten.
+
+| Bereich | Grenze | Env-Var |
+|---|---|---|
+| alles übrige | 120/Minute | `RATE_LIMIT_DEFAULT` |
+| `/api/race-history/{id}` | 60/Minute | `RATE_LIMIT_RACE_DETAIL` |
+| `/api/export/*.csv` | 10/Stunde | `RATE_LIMIT_EXPORT` |
+| `/api/health` | **ausgenommen** | – |
+
+`/api/health` ist ausdrücklich ausgenommen: Render fragt den Pfad alle ~10
+Sekunden ab. Ohne die Ausnahme wurden im Test 30 von 40
+Health-Check-Requests mit 429 abgewiesen - Render hätte daraus eine kaputte
+Instanz gelesen und Deploys scheitern lassen.
+
+**Die echte Client-IP** kommt aus `X-Forwarded-For`, nicht aus
+`request.client.host` (das ist hinter Renders Router die Proxy-Adresse -
+alle Besucher lägen in einem gemeinsamen Kontingent). Gelesen wird vom
+**Ende** der Kette (`TRUSTED_PROXY_COUNT`, auf Render 1): der Proxy hängt
+die echte Adresse hinten an, der erste Eintrag ist client-kontrolliert und
+wäre fälschbar. Nachgemessen: ein gefälschter erster Eintrag verschafft kein
+frisches Kontingent.
+
+> **Jeder `@limiter.limit`-Endpunkt braucht `response: Response`** - sonst
+> antwortet er mit **500 auf jeden Aufruf**, nicht erst bei erreichter
+> Grenze. Weil `headers_enabled=True` gesetzt ist, ruft slowapi nach jedem
+> Aufruf `_inject_headers()` auf, um die `X-RateLimit-*`-Header zu setzen.
+> Gibt der Endpunkt keine `Response` zurück (sondern z.B. ein `dict`), holt
+> slowapi das Objekt aus einem Parameter namens `response` - und wirft, wenn
+> es den nicht gibt.
+>
+> Genau das ist hier passiert: `/api/race-history/{race_id}` war nach dem
+> Einbau von `headers_enabled` durchgehend kaputt, das Aufklappen eines
+> Rennens im Kalender lieferte nur noch 500. Die Drosselung selbst
+> funktionierte, es stand nirgends eine Warnung, und von außen war der
+> Fehler nicht von einem Datenbank-Problem zu unterscheiden. Die CSV-Exporte
+> waren nicht betroffen, weil sie eine `StreamingResponse` zurückgeben -
+> daher die Rückgabe-Annotationen `-> StreamingResponse` dort.
+>
+> `_check_ratelimit_headers` prüft beim Start jeden gedrosselten Endpunkt
+> darauf und protokolliert sonst einen Fehler mit Pfad und Funktionsname.
+> Gegengeprobt: mit entferntem Parameter meldet die Prüfung genau diesen
+> Endpunkt, mit Parameter meldet sie nichts.
+
+> **Stolperstelle bei einem FastAPI-Upgrade.** `SlowAPIMiddleware` ermittelt
+> die Route über `_find_route_handler(app.routes, scope)` und schaut nur eine
+> Ebene tief. Unter der gepinnten 0.115.0 flacht `include_router()` alle
+> Routen zu `APIRoute`-Objekten ab, die Auflösung funktioniert. Neuere
+> Versionen (nachgemessen mit 0.141.1) legen stattdessen ein opakes
+> `_IncludedRouter`-Objekt ohne `.endpoint` ab - die Middleware hält dann
+> **jede** Router-Route für ausgenommen und drosselt nichts, ohne jede
+> Fehlermeldung. `_check_ratelimit_coverage` prüft das beim Start und warnt.
+
+### Konfiguration: render.yaml und REQUIRE_DATABASE
+
+`backend/render.yaml` beschreibt **nicht** den laufenden Service: der wurde
+von Hand angelegt, und Render kann einen bestehenden Service nicht
+nachträglich einem Blueprint unterstellen. Die Datei dient als Dokumentation
+der richtigen Konfiguration und als Vorlage für einen Neuaufbau; wer sie
+anwendet, bekommt einen zweiten Service daneben. Sie war zusätzlich falsch
+(abweichender `rootDir`/`buildCommand`, kein `DATABASE_URL`, kein
+`healthCheckPath`) und ist jetzt korrekt.
+
+Ohne `DATABASE_URL` läuft die App weiter und liefert leere Listen - lokal
+gewollt, in Produktion eine Falle. Genau das ist am 12.09. passiert: der
+Service lief nach dem Anlegen der Datenbank noch ohne `DATABASE_URL` und
+lieferte stillschweigend leere Daten. Mit `REQUIRE_DATABASE=1` bricht der
+Start stattdessen ab.
+
+### CSV-Export streamt wirklich
+
+`StreamingResponse` war Kosmetik: `fetchall()` holte alle Zeilen in eine
+Liste, `io.StringIO` baute daraus das komplette CSV, und
+`iter([buffer.getvalue()])` gab es als einen Block aus - der Bestand lag
+zweimal im Speicher. Jetzt läuft alles über `db.stream_query` (benannter
+server-side Cursor, `EXPORT_ITERSIZE` Zeilen pro Block) und wird blockweise
+als CSV ausgegeben. Spaltennamen kommen aus `cur.description`, nicht aus der
+ersten Zeile - so stimmt der Kopf auch bei leerem Ergebnis.
+
+Gemessen mit 200.000 Zeilen in `race_results` (13,5 MiB CSV):
+
+| | RSS-Zuwachs |
+|---|---|
+| vorher | **186 MiB** |
+| nachher | **30 MiB** |
+
+Auf einer 512-MB-Instanz war das der Weg in den OOM-Killer, und der Zielumfang
+(~2.000 Rennen × Top 10 × Etappen) liegt deutlich über den getesteten 200.000
+Zeilen.
+
+`export_seasons` expandierte die Jahre in Python und ließ sich so nicht
+streamen - das macht jetzt `generate_series` in SQL. Reihenfolge und Inhalt
+sind identisch, **inklusive** der doppelten Jahre bei überlappenden Stints:
+das ist ein eigener Befund (siehe "Bekannte Lücken") und wird hier nicht
+nebenbei mitgeändert. Alle sieben CSV-Ausgaben wurden vor und nach dem Umbau
+byteweise verglichen.
+
+Optionaler Zugriffsschutz: ist `EXPORT_TOKEN` gesetzt, verlangen alle
+Export-Routen `Authorization: Bearer <token>` (Vergleich per
+`secrets.compare_digest`). Ohne die Variable bleiben sie offen wie bisher.
 
 ## Backup (`app/backup.py`)
 

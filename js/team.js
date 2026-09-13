@@ -46,7 +46,7 @@ function initials(name) {
 }
 
 function formatDate(dateStr) {
-    return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' });
+    return formatCalendarDate(dateStr, { day: '2-digit', month: 'long', year: 'numeric' });
 }
 
 function computeStats(team, results) {
