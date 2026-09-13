@@ -16,8 +16,7 @@ function riderInitials(name) {
 }
 
 function formatBirthDate(dateStr) {
-    if (!dateStr) return null;
-    return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return formatCalendarDate(dateStr) || null;
 }
 
 function stravaLink(rider) {

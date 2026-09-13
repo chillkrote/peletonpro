@@ -74,8 +74,11 @@ function errorPanel(text, detail) {
     return `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>${escapeHtml(text)}</h3><p>${escapeHtml(detail || 'Bitte später erneut versuchen.')}</p></div>`;
 }
 
+// Lokales Kalenderdatum (siehe js/ui.js). Vorher das UTC-Datum aus
+// toISOString(), was an den Tagesgrenzen gegen die lokal angezeigten
+// Renndaten daneben lag.
 function todayIso() {
-    return new Date().toISOString().slice(0, 10);
+    return todayCalendarIso();
 }
 
 function isLiveRace(race) {
@@ -91,17 +94,16 @@ function byDateAsc(a, b) {
 }
 
 function formatDayMonth(dateStr) {
-    if (!dateStr) return { day: '?', month: '' };
-    const date = new Date(dateStr);
+    const day = formatCalendarDate(dateStr, { day: '2-digit' });
+    if (!day) return { day: '?', month: '' };
     return {
-        day: date.toLocaleDateString('de-DE', { day: '2-digit' }),
-        month: date.toLocaleDateString('de-DE', { month: 'short' }).replace('.', '').toUpperCase(),
+        day,
+        month: formatCalendarDate(dateStr, { month: 'short' }).replace('.', '').toUpperCase(),
     };
 }
 
 function formatDateShort(dateStr) {
-    if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' });
+    return formatCalendarDate(dateStr, { day: '2-digit', month: 'short' });
 }
 
 function sectionLabel(text) {

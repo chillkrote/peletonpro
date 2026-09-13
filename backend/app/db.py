@@ -519,46 +519,62 @@ def ensure_season_point_placeholders() -> int:
         return cur.rowcount
 
 
+# Ein Fahrer kann in EINEM Jahr in zwei Stints auftauchen: auf Wikipedia
+# überlappt das Startjahr eines neuen Stints regelmäßig mit dem Endjahr des
+# alten (Wechsel zum Saisonwechsel). Die frühere Python-Expansion erzeugte
+# dafür zwei Zeilen für dasselbe Jahr - auf rider.html stand die Saison
+# doppelt in der Tabelle, und rider_seasons.csv enthielt sie zweimal.
+#
+# DISTINCT ON (rider_id, year) mit ORDER BY ... start_year DESC behält die
+# Zeile des SPÄTEREN Stints. Das passt zu rider_season_points, das mit
+# PRIMARY KEY (rider_id, year) ohnehin genau eine Zeile pro Jahr vorsieht -
+# eine Darstellung mit zwei Teams pro Übergangsjahr hätte dort kein Ziel.
+#
+# Ein SQL-Ausdruck für beide Aufrufer (Detailansicht und CSV-Export), damit
+# die Ableitung nicht zweimal existiert und wieder auseinanderläuft.
+_SEASONS_SQL = """
+    SELECT DISTINCT ON (s.rider_id, gs.year)
+           s.rider_id, gs.year, s.team_id,
+           r.name AS rider_name, r.last_name, r.first_name,
+           t.name AS team_name, t.wiki_url AS team_wiki_url, p.uci_points
+    FROM rider_team_stints s
+    JOIN riders r ON r.id = s.rider_id
+    JOIN teams t ON t.id = s.team_id
+    CROSS JOIN LATERAL generate_series(s.start_year, COALESCE(s.end_year, %(season)s)) AS gs(year)
+    LEFT JOIN rider_season_points p
+           ON p.rider_id = s.rider_id AND p.year = gs.year
+    {where}
+    ORDER BY s.rider_id, gs.year, s.start_year DESC
+"""
+
+
 def get_rider_seasons(rider_id: str) -> list[RiderSeason]:
-    """Leitet Saison-für-Saison-Zuordnungen (Jahr -> Team) aus den
-    gespeicherten Team-Stints ab, ergänzt um die (noch meist leeren)
-    UCI-Punkte aus rider_season_points. Nur Stints bei einem aktuell
-    bekannten WorldTour-Team (team_id gesetzt, also in der teams-Tabelle
-    vorhanden) zählen als "World Tour"-Saison - die Infobox-Historie eines
-    Fahrers listet auch niedrigere Kategorien (Continental/ProConti) auf,
-    die nicht Teil der World Tour sind und hier bewusst ausgeschlossen
-    werden. Ein offener Zeitraum (end_year IS NULL, aktuelles Team) läuft
-    bis zur laufenden Saison (RACE_SEASON_YEAR)."""
+    """Saison-für-Saison-Zuordnungen (Jahr -> Team) aus den gespeicherten
+    Team-Stints, ergänzt um die (noch meist leeren) UCI-Punkte aus
+    rider_season_points.
+
+    Nur Stints bei einem aktuell bekannten WorldTour-Team (team_id gesetzt,
+    also in der teams-Tabelle vorhanden) zählen als "World Tour"-Saison - die
+    Infobox-Historie eines Fahrers listet auch niedrigere Kategorien
+    (Continental/ProConti) auf, die nicht Teil der World Tour sind. Ein
+    offener Zeitraum (end_year IS NULL, aktuelles Team) läuft bis zur
+    laufenden Saison (RACE_SEASON_YEAR). Pro Jahr genau eine Zeile, siehe
+    _SEASONS_SQL."""
+    inner = _SEASONS_SQL.format(where="WHERE s.rider_id = %(rider_id)s")
     with _connect() as conn:
         rows = conn.execute(
-            """
-            SELECT s.start_year, s.end_year, t.name AS team_name, t.wiki_url AS team_wiki_url
-            FROM rider_team_stints s
-            JOIN teams t ON t.id = s.team_id
-            WHERE s.rider_id = %s
-            ORDER BY s.start_year
-            """,
-            (rider_id,),
+            f"SELECT * FROM ({inner}) q ORDER BY q.year DESC",
+            {"season": RACE_SEASON_YEAR, "rider_id": rider_id},
         ).fetchall()
-        points_rows = conn.execute(
-            "SELECT year, uci_points FROM rider_season_points WHERE rider_id = %s",
-            (rider_id,),
-        ).fetchall()
-    points_by_year = {row["year"]: row["uci_points"] for row in points_rows}
-    seasons: list[RiderSeason] = []
-    for row in rows:
-        end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
-        for year in range(row["start_year"], end_year + 1):
-            seasons.append(
-                RiderSeason(
-                    year=year,
-                    team_name=row["team_name"],
-                    team_wiki_url=row["team_wiki_url"],
-                    uci_points=points_by_year.get(year),
-                )
-            )
-    seasons.sort(key=lambda s: s.year, reverse=True)
-    return seasons
+    return [
+        RiderSeason(
+            year=row["year"],
+            team_name=row["team_name"],
+            team_wiki_url=row["team_wiki_url"],
+            uci_points=row["uci_points"],
+        )
+        for row in rows
+    ]
 
 
 def get_rider_count() -> int:
@@ -650,26 +666,17 @@ def export_stints():
 def export_seasons():
     """Eine Zeile pro Fahrer und Saison (Jahr) bei einem WorldTour-Team.
 
-    Die Jahres-Expansion läuft jetzt per generate_series in SQL statt in
-    Python - nur so lässt sich das Ergebnis streamen. Reihenfolge und Inhalt
-    sind bewusst identisch zur früheren Python-Schleife, INKLUSIVE der
-    doppelten Jahre bei überlappenden Stints: das ist ein eigener Befund
-    (siehe README, "Bekannte Lücken") und wird hier nicht nebenbei
-    mitgeändert, damit dieser Umbau rein strukturell bleibt.
-
-    `uci_points` ist der Platzhalter aus rider_season_points (siehe
-    ensure_season_point_placeholders) - i.d.R. noch NULL."""
+    Nutzt denselben SQL-Ausdruck wie get_rider_seasons (_SEASONS_SQL) -
+    inklusive der Entdopplung pro Jahr, die vorher in beiden Pfaden fehlte
+    (siehe dort). `uci_points` ist der Platzhalter aus rider_season_points
+    (siehe ensure_season_point_placeholders) - i.d.R. noch NULL."""
+    inner = _SEASONS_SQL.format(where="")
     return stream_query(
-        """
-        SELECT s.rider_id, r.name AS rider_name, gs.year, s.team_id,
-               t.name AS team_name, t.wiki_url AS team_wiki_url, p.uci_points
-        FROM rider_team_stints s
-        JOIN riders r ON r.id = s.rider_id
-        JOIN teams t ON t.id = s.team_id
-        CROSS JOIN LATERAL generate_series(s.start_year, COALESCE(s.end_year, %s)) AS gs(year)
-        LEFT JOIN rider_season_points p
-               ON p.rider_id = s.rider_id AND p.year = gs.year
-        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year, gs.year
+        f"""
+        SELECT q.rider_id, q.rider_name, q.year, q.team_id, q.team_name,
+               q.team_wiki_url, q.uci_points
+        FROM ({inner}) q
+        ORDER BY q.last_name NULLS LAST, q.first_name NULLS LAST, q.year
         """,
-        (RACE_SEASON_YEAR,),
+        {"season": RACE_SEASON_YEAR},
     )

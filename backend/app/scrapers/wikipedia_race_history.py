@@ -35,6 +35,7 @@ from typing import Optional
 from bs4 import BeautifulSoup
 
 from ..models import RaceResultEntry, RaceStage
+from ..text import normalize_dashes
 from .wikipedia import (
     fetch_full_page,
     fetch_lead_section,
@@ -100,7 +101,7 @@ def _parse_date_range_flexible(text: str, default_year: int) -> Optional[tuple[s
     January")."""
     from datetime import date
 
-    text = text.replace("–", "-").replace("—", "-").strip()
+    text = normalize_dashes(text).strip()
     year_suffix = r"(?:\s+(\d{4}))?"
 
     m = re.match(rf"^(\d{{1,2}})\s*-\s*(\d{{1,2}})\s+([A-Za-z]+){year_suffix}$", text)

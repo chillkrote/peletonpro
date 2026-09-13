@@ -620,6 +620,49 @@ Schedulers (`history_fetched_at IS NULL`, `strava_checked_at IS NULL`) - für
 `races` gab es das Gegenstück schon, hier fehlte es. `EXPLAIN` zeigt jetzt
 einen Index Scan statt Seq Scan plus Sortierung über die ganze Tabelle.
 
+## Datenqualität
+
+### Eine Zeile pro Fahrer und Saison
+
+Ein Fahrer kann in EINEM Jahr in zwei Stints auftauchen: auf Wikipedia
+überlappt das Startjahr eines neuen Stints regelmäßig mit dem Endjahr des
+alten (Wechsel zum Saisonwechsel). Die frühere Python-Expansion erzeugte
+dafür zwei Zeilen für dasselbe Jahr - auf `rider.html` stand die Saison
+doppelt in der Tabelle "Karriere in der World Tour", und
+`rider_seasons.csv` enthielt sie zweimal.
+
+Reproduziert mit den Stints 2017–2018 (A), 2018–2020 (B), 2021– (C): 2018
+kam zweimal. Jetzt entdoppelt `DISTINCT ON (rider_id, year)` mit
+`ORDER BY ... start_year DESC` auf die Zeile des **späteren** Stints - 2018
+gehört also zu Team B. Das passt zu `rider_season_points`, das mit
+`PRIMARY KEY (rider_id, year)` ohnehin genau eine Zeile pro Jahr vorsieht;
+eine Darstellung mit zwei Teams pro Übergangsjahr hätte dort kein Ziel.
+
+`get_rider_seasons` und `export_seasons` teilen dafür **einen** SQL-Ausdruck
+(`_SEASONS_SQL`). Vorher existierte die Ableitung zweimal - und beide Kopien
+hatten denselben Fehler.
+
+### Striche in Wikipedia-Zeiträumen
+
+`YEAR_RANGE_RE` kannte nur Halbgeviert- und Bindestrich. Ein Geviertstrich
+liess den Stint still verschwinden, ohne Log-Eintrag - bei mehr Historie
+(alte Artikel sind uneinheitlicher formatiert) führt das zu unsichtbaren
+Lücken. `app/text.py::normalize_dashes` vereinheitlicht jetzt alle sieben
+Strich-Varianten (U+2010 bis U+2015, U+2212) sowie geschützte Leerzeichen,
+und zwar für **alle drei** Parser: `wikipedia_riders`, `wikipedia_races` und
+`wikipedia_race_history` machten das vorher unterschiedlich oder gar nicht.
+
+Nicht erkannte Labels werden jetzt auf `DEBUG` geloggt statt stumm
+verworfen. `2019/20` bleibt bewusst unerkannt: dieses Format gehört zu den
+Continental-Saison-*Seiten*, nicht zu Fahrer-Infoboxen - sollte es dort doch
+vorkommen, fällt es über das Log auf.
+
+> Die bereits geladenen Historien werden davon nicht rückwirkend
+> korrigiert. Ein Neuladen kostet einen Wikipedia-Abruf pro Fahrer (~517,
+> ratenlimitiert also gut eine halbe Stunde) und lässt sich bei Bedarf
+> anstossen mit:
+> `UPDATE riders SET history_fetched_at = NULL;`
+
 ## Sicherheit
 
 ### Keine internen Fehlertexte nach außen
@@ -659,6 +702,28 @@ kompletten Renn-Liste ab und musste die dafür laden.
 
 > Die `/seasons`-Route muss im Router **vor** `/{race_id}` stehen, sonst
 > matcht "seasons" als `race_id`.
+
+### Fremd-Stylesheets
+
+Alle sechs Seiten laden Font Awesome von `cdnjs.cloudflare.com` ohne
+`integrity`. Ein kompromittiertes CDN kann damit beliebiges CSS im Kontext
+der Seite ausführen - CSS reicht für Datenabfluss über Attribut-Selektoren
+und Hintergrundbild-URLs.
+
+Der Hash muss aus der echten Datei gebildet werden; ein geratener Wert
+blockiert das Stylesheet komplett und die Seiten verlieren alle Icons.
+`scripts/add-sri.sh` holt die Datei, prüft Grösse und Inhalt, bildet den
+SHA-384 und trägt `integrity` samt `crossorigin` in alle sechs Seiten ein -
+idempotent, also auch beim Versions-Upgrade erneut aufrufbar.
+
+Selbst-Hosten wäre die dauerhafte Lösung (21 tatsächlich benutzte Icons,
+gezählt über `grep -ohrE "fa-[a-z0-9-]+" *.html js/*.js`), ändert aber das
+Erscheinungsbild und ist ein eigener Schritt.
+
+**Google Fonts lässt sich nicht per SRI absichern:** Google liefert je nach
+User-Agent unterschiedliches CSS aus (verschiedene Font-Formate), der Hash
+ist also nicht stabil. Das Risiko ist der Art nach vergleichbar, der Weg
+dagegen wäre Selbst-Hosten der Schriften - bewusst nicht in diesem Schritt.
 
 ### CSV-Export streamt wirklich
 
