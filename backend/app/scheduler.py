@@ -5,15 +5,21 @@ cache.mark_error weg, statt den Scheduler-Thread (und damit alle
 folgenden Jobs) abstürzen zu lassen. Der zuletzt erfolgreiche Datenstand
 bleibt dabei erhalten (siehe app/cache.py).
 """
+import argparse
 import logging
-from datetime import date, datetime
+import sys
+import time
+from datetime import date, datetime, timedelta
 
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from . import cache, db, db_races
 from .config import (
+    JOB_START_STAGGER_SECONDS,
     RACE_HISTORY_CIRCUITS,
     RACE_HISTORY_DETAIL_BATCH_SIZE,
+    RACE_HISTORY_RUN_SECONDS,
     RACE_HISTORY_START_YEAR,
     RACE_SEASON_YEAR,
     REFRESH_INTERVAL_CALENDAR,
@@ -23,6 +29,7 @@ from .config import (
     REFRESH_INTERVAL_RIDER_DETAILS,
     REFRESH_INTERVAL_ROSTERS,
     REFRESH_INTERVAL_TEAMS,
+    RIDER_DETAILS_RUN_SECONDS,
     RIDER_HISTORY_BATCH_SIZE,
     STRAVA_BATCH_SIZE,
 )
@@ -36,6 +43,54 @@ from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_te
 from .scrapers.wikipedia_teams import fetch_current_worldteams
 
 logger = logging.getLogger(__name__)
+
+
+class Budget:
+    """Zeitbudget für einen Job-Lauf.
+
+    Die beiden Rückstands-Jobs (Renn-Details, Fahrer-Details) arbeiten sich
+    durch eine Warteschlange, die Stunden bis Tage umfasst. Vorher holten
+    sie eine feste Zahl Einträge pro Lauf und warteten dann auf das nächste
+    Intervall - mit dem Ergebnis, dass die Laufzeit vom Inhalt abhing
+    (ein Etappenrennen kostet ein Vielfaches eines Eintagesrennens) und
+    regelmäßig über dem Intervall lag. APScheduler hat die nächsten Läufe
+    dann verworfen ("maximum number of running instances reached").
+
+    Mit einem Budget ist es umgekehrt: der Job arbeitet, solange Zeit übrig
+    ist, und hört rechtzeitig auf. Die Laufzeit wird damit vorhersagbar und
+    bleibt unter dem Intervall, statt vom Zufall der Datenlage abzuhängen."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self._end = time.monotonic() + seconds
+
+    @property
+    def remaining(self) -> float:
+        return self._end - time.monotonic()
+
+    @property
+    def expired(self) -> bool:
+        return self.remaining <= 0
+
+    def __str__(self) -> str:
+        return f"{self.seconds:.0f}s Budget"
+
+
+def _timed(func, job_id: str):
+    """Misst und loggt die Laufzeit jedes Job-Laufs. An einer Stelle statt in
+    jedem Job, und die Grundlage dafür, die Intervalle an die tatsächlichen
+    Laufzeiten anzupassen statt an Wunschwerte (siehe README,
+    Abschnitt "Hintergrund-Jobs")."""
+
+    def wrapper() -> None:
+        start = time.monotonic()
+        try:
+            func()
+        finally:
+            logger.info("Job %s beendet nach %.1fs", job_id, time.monotonic() - start)
+
+    wrapper.__name__ = job_id
+    return wrapper
 
 
 def refresh_teams() -> None:
@@ -210,22 +265,45 @@ def refresh_rider_details() -> None:
         logger.info("Fahrer-Detail-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
         return
 
-    pending = db.get_riders_missing_history(limit=RIDER_HISTORY_BATCH_SIZE)
+    budget = Budget(RIDER_DETAILS_RUN_SECONDS)
     fetched = 0
-    for rider_row in pending:
-        try:
-            wiki_title = wiki_title_from_url(rider_row["wiki_url"])
-            history = fetch_rider_history(wiki_title)
-            db.replace_stints(rider_row["id"], history.stints)
-            fetched += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Historie-Scraping für '%s' fehlgeschlagen: %s", rider_row["name"], exc)
-    if pending:
+    # Ein fehlgeschlagener Abruf lässt history_fetched_at auf NULL stehen,
+    # der Fahrer taucht also in der nächsten Batch-Abfrage DESSELBEN Laufs
+    # wieder auf. Ohne diese Menge würde der Job sein Budget auf denselben
+    # paar kaputten Seiten verbrennen, statt weiterzukommen. Beim nächsten
+    # Lauf werden sie regulär erneut versucht.
+    attempted: set[str] = set()
+    stopped_early = False
+    while not budget.expired:
+        # Fenster um die bereits versuchten wachsen lassen - siehe
+        # refresh_race_history, gleiche Begründung.
+        batch = [
+            r for r in db.get_riders_missing_history(
+                limit=RIDER_HISTORY_BATCH_SIZE + len(attempted)
+            )
+            if r["id"] not in attempted
+        ]
+        if not batch:
+            break
+        for rider_row in batch:
+            if budget.expired:
+                stopped_early = True
+                break
+            attempted.add(rider_row["id"])
+            try:
+                wiki_title = wiki_title_from_url(rider_row["wiki_url"])
+                history = fetch_rider_history(wiki_title)
+                db.replace_stints(rider_row["id"], history.stints)
+                fetched += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Historie-Scraping für '%s' fehlgeschlagen: %s", rider_row["name"], exc)
+    if attempted:
         remaining = db.get_riders_missing_history_count()
         logger.info(
-            "Fahrer-Historie geladen: %d/%d in diesem Lauf, noch %d Fahrer ausstehend",
+            "Fahrer-Historie geladen: %d/%d in diesem Lauf (%s), noch %d Fahrer ausstehend",
             fetched,
-            len(pending),
+            len(attempted),
+            "Budget aufgebraucht" if stopped_early else "nichts mehr zu versuchen",
             remaining,
         )
 
@@ -280,9 +358,13 @@ def refresh_race_history() -> None:
         logger.info("Renn-Historie-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
         return
 
+    budget = Budget(RACE_HISTORY_RUN_SECONDS)
+
     seeded_now = 0
     for category, circuit in _race_history_series():
         for year in range(RACE_HISTORY_START_YEAR, RACE_SEASON_YEAR + 1):
+            if budget.expired:
+                break
             if db_races.is_season_seeded(category, year, circuit):
                 continue
             label = f"{category}{f'/{circuit}' if circuit else ''} {year}"
@@ -307,29 +389,55 @@ def refresh_race_history() -> None:
     if seeded_now:
         logger.info("Renn-Historie-Seeding: %d neue Saison/Kategorie-Kombinationen verarbeitet", seeded_now)
 
-    pending = db_races.get_races_missing_details(limit=RACE_HISTORY_DETAIL_BATCH_SIZE)
+    # Phase 2 arbeitet, solange Budget übrig ist, statt eine feste Zahl
+    # Rennen zu holen und dann bis zum nächsten Intervall zu warten. Die
+    # Batch-Größe ist damit nur noch das Abfrage-Fenster; wie lange der Lauf
+    # dauert, bestimmt das Budget - und dadurch bleibt die Laufzeit unter
+    # dem Intervall, egal ob gerade Eintages- oder Etappenrennen anstehen
+    # (ein Etappenrennen kostet ein Vielfaches an Abrufen).
     fetched = 0
-    for race_row in pending:
-        try:
-            wiki_title = wiki_title_from_url(race_row["wiki_url"])
-            details = fetch_race_details(wiki_title, race_row["season"])
-            db_races.replace_race_details(
-                race_row["id"],
-                num_stages=details["num_stages"],
-                distance_km=details["distance_km"],
-                organizer_website=details["organizer_website"],
-                results=details["results"],
-                stages=details["stages"],
+    # Wie bei den Fahrer-Details: ein fehlgeschlagenes Rennen behält
+    # results_fetched_at NULL und käme sonst im selben Lauf endlos wieder.
+    attempted: set[str] = set()
+    stopped_early = False
+    while not budget.expired:
+        # Fenster um die bereits versuchten wachsen lassen: sonst liefert
+        # die Abfrage immer wieder dieselben (gescheiterten) Einträge und
+        # der Lauf käme nie an ihnen vorbei.
+        batch = [
+            r for r in db_races.get_races_missing_details(
+                limit=RACE_HISTORY_DETAIL_BATCH_SIZE + len(attempted)
             )
-            fetched += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Detail-Scraping für '%s' fehlgeschlagen: %s", race_row["name"], exc)
-    if pending:
+            if r["id"] not in attempted
+        ]
+        if not batch:
+            break
+        for race_row in batch:
+            if budget.expired:
+                stopped_early = True
+                break
+            attempted.add(race_row["id"])
+            try:
+                wiki_title = wiki_title_from_url(race_row["wiki_url"])
+                details = fetch_race_details(wiki_title, race_row["season"])
+                db_races.replace_race_details(
+                    race_row["id"],
+                    num_stages=details["num_stages"],
+                    distance_km=details["distance_km"],
+                    organizer_website=details["organizer_website"],
+                    results=details["results"],
+                    stages=details["stages"],
+                )
+                fetched += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Detail-Scraping für '%s' fehlgeschlagen: %s", race_row["name"], exc)
+    if attempted:
         remaining = db_races.get_races_missing_details_count()
         logger.info(
-            "Renn-Historie-Details geladen: %d/%d in diesem Lauf, noch %d Rennen ausstehend",
+            "Renn-Historie-Details geladen: %d/%d in diesem Lauf (%s), noch %d Rennen ausstehend",
             fetched,
-            len(pending),
+            len(attempted),
+            "Budget aufgebraucht" if stopped_early else "nichts mehr zu versuchen",
             remaining,
         )
 
@@ -344,29 +452,90 @@ def refresh_news() -> None:
         cache.mark_error("news", str(exc))
 
 
+# (Funktion, Intervall in Sekunden, Job-ID, Executor-Pool).
+# Alles, was Wikipedia abfragt, gehört in den "scrape"-Pool mit einem
+# Worker - siehe start_scheduler().
 JOBS = [
-    (refresh_teams, REFRESH_INTERVAL_TEAMS, "refresh_teams"),
-    (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar"),
-    (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results"),
-    (refresh_rosters, REFRESH_INTERVAL_ROSTERS, "refresh_rosters"),
-    (refresh_rider_details, REFRESH_INTERVAL_RIDER_DETAILS, "refresh_rider_details"),
-    (refresh_race_history, REFRESH_INTERVAL_RACE_HISTORY, "refresh_race_history"),
-    (refresh_news, REFRESH_INTERVAL_NEWS, "refresh_news"),
+    (refresh_teams, REFRESH_INTERVAL_TEAMS, "refresh_teams", "scrape"),
+    (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar", "scrape"),
+    (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results", "scrape"),
+    (refresh_rosters, REFRESH_INTERVAL_ROSTERS, "refresh_rosters", "scrape"),
+    (refresh_rider_details, REFRESH_INTERVAL_RIDER_DETAILS, "refresh_rider_details", "scrape"),
+    (refresh_race_history, REFRESH_INTERVAL_RACE_HISTORY, "refresh_race_history", "scrape"),
+    (refresh_news, REFRESH_INTERVAL_NEWS, "refresh_news", "default"),
 ]
 
 
 def start_scheduler() -> BackgroundScheduler:
-    scheduler = BackgroundScheduler()
-    for func, interval_seconds, job_id in JOBS:
+    """Startet alle Jobs im Hintergrund.
+
+    Zwei Executor-Pools statt des Standard-Pools mit zehn Threads:
+
+    - "scrape" mit EINEM Worker für alle Jobs, die Wikipedia abfragen.
+      Parallelität bringt dort nichts: `scrapers/http.py` lässt ohnehin nur
+      einen Request alle SCRAPER_REQUEST_DELAY_SECONDS pro Host durch. Zwei
+      gleichzeitige Wikipedia-Jobs haben sich deshalb nur gegenseitig
+      ausgebremst - jeder lief doppelt so lange, beide überschritten ihr
+      Intervall, und APScheduler verwarf die nächsten Läufe.
+    - "default" für alles Übrige (aktuell nur der RSS-Newsfeed, der andere
+      Hosts anspricht und nicht hinter den Wikipedia-Jobs warten soll).
+    """
+    scheduler = BackgroundScheduler(
+        executors={
+            "default": ThreadPoolExecutor(max_workers=2),
+            "scrape": ThreadPoolExecutor(max_workers=1),
+        }
+    )
+    # Startversatz, damit nicht alle Jobs gleichzeitig loslaufen und sich vor
+    # dem einen "scrape"-Worker stauen.
+    stagger = 0
+    for func, interval_seconds, job_id, executor in JOBS:
         scheduler.add_job(
-            func,
+            _timed(func, job_id),
             "interval",
             seconds=interval_seconds,
             id=job_id,
-            next_run_time=datetime.now(),  # sofort einmal ausführen, dann im Intervall
+            executor=executor,
+            next_run_time=datetime.now() + timedelta(seconds=stagger),
             max_instances=1,
             coalesce=True,
+            # Ein Job, der hinter einem anderen auf den einzigen
+            # "scrape"-Worker wartet, startet später als geplant. APSchedulers
+            # Default (misfire_grace_time=1s) verwirft ihn dann komplett -
+            # der Rückstands-Abbau kam dadurch überhaupt nicht mehr zum Zug.
+            # Eine Verspätung von bis zu einem vollen Intervall ist hier
+            # unkritisch: besser spät als gar nicht.
+            misfire_grace_time=interval_seconds,
         )
+        stagger += JOB_START_STAGGER_SECONDS
     scheduler.start()
     logger.info("Scheduler gestartet mit %d Jobs", len(JOBS))
     return scheduler
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Einen einzelnen Job einmal ausführen und beenden.
+
+        python -m app.scheduler refresh_race_history
+
+    Gedacht für einen Render Cron Job oder Background Worker: der
+    Renn-Backfill braucht durchgängige Laufzeit, die eine kostenlose
+    Web-Instanz nicht liefert (sie schläft nach 15 Minuten ohne Requests
+    ein, siehe README). Greift bewusst auf dieselbe JOBS-Liste zu wie der
+    Scheduler, damit es keine zweite Registrierung gibt, die auseinander
+    laufen kann."""
+    by_id = {job_id: func for func, _interval, job_id, _executor in JOBS}
+    parser = argparse.ArgumentParser(
+        prog="python -m app.scheduler",
+        description="Einen einzelnen Hintergrund-Job einmal ausführen.",
+    )
+    parser.add_argument("job", choices=sorted(by_id), help="Name des Jobs")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    _timed(by_id[args.job], args.job)()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -55,7 +55,13 @@ REFRESH_INTERVAL_ROSTERS = int(os.environ.get("REFRESH_INTERVAL_ROSTERS", str(24
 # und Strava-Abgleich für Fahrer, die noch keine haben. Behält den kurzen
 # Takt, weil der Job batchweise durch einen Rückstand arbeitet - ist der
 # abgebaut, kostet ein Lauf zwei billige Abfragen und sonst nichts.
-REFRESH_INTERVAL_RIDER_DETAILS = int(os.environ.get("REFRESH_INTERVAL_RIDER_DETAILS", str(3 * 60)))
+REFRESH_INTERVAL_RIDER_DETAILS = int(os.environ.get("REFRESH_INTERVAL_RIDER_DETAILS", str(15 * 60)))
+
+# Zeitbudget pro Lauf (siehe scheduler.Budget). Der Job arbeitet, solange
+# Budget übrig ist, statt eine feste Zahl Einträge zu holen - damit bleibt
+# die Laufzeit vorhersagbar unter dem Intervall, statt von der Datenlage
+# abzuhängen. Muss deutlich kleiner sein als das Intervall.
+RIDER_DETAILS_RUN_SECONDS = float(os.environ.get("RIDER_DETAILS_RUN_SECONDS", "120"))
 RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
 
 # Strava-Profil-Abgleich über Wikidata (siehe scrapers/wikidata.py) - läuft
@@ -76,7 +82,18 @@ STRAVA_BATCH_SIZE = int(os.environ.get("STRAVA_BATCH_SIZE", "50"))
 # codiert): das Seeding pro Jahr ist idempotent (race_history_seed_log) -
 # den Wert später abzusenken (z.B. auf 2010) holt automatisch weitere
 # Jahre nach, ohne bereits vorhandene Daten anzurühren.
-REFRESH_INTERVAL_RACE_HISTORY = int(os.environ.get("REFRESH_INTERVAL_RACE_HISTORY", str(3 * 60)))
+REFRESH_INTERVAL_RACE_HISTORY = int(os.environ.get("REFRESH_INTERVAL_RACE_HISTORY", str(15 * 60)))
+
+# Zeitbudget pro Lauf (siehe scheduler.Budget), deckt Seeding UND Backfill
+# ab. Zusammen mit RIDER_DETAILS_RUN_SECONDS muss es unter das Intervall
+# passen: beide Jobs teilen sich einen Executor mit einem Worker, weil die
+# Wikipedia-Drosselung Parallelität ohnehin verhindert.
+RACE_HISTORY_RUN_SECONDS = float(os.environ.get("RACE_HISTORY_RUN_SECONDS", "600"))
+
+# Startversatz zwischen den Jobs beim Hochfahren. Ohne ihn feuern alle Jobs
+# gleichzeitig und stauen sich vor dem einen "scrape"-Worker (siehe
+# scheduler.start_scheduler).
+JOB_START_STAGGER_SECONDS = int(os.environ.get("JOB_START_STAGGER_SECONDS", "5"))
 RACE_HISTORY_START_YEAR = int(os.environ.get("RACE_HISTORY_START_YEAR", "2020"))
 RACE_HISTORY_DETAIL_BATCH_SIZE = int(os.environ.get("RACE_HISTORY_DETAIL_BATCH_SIZE", "15"))
 RACE_HISTORY_CIRCUITS = ("africa", "asia", "europe", "america", "oceania")

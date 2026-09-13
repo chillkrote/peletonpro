@@ -445,15 +445,86 @@ API läuft dann unter `http://localhost:8001`, z.B.
 
 ## Hintergrund-Jobs
 
-| Job | Takt | Was er tut |
-|---|---|---|
-| `refresh_teams` | 24 h | WorldTeams-Übersicht in den Cache |
-| `refresh_calendar` | 24 h | Saison-Kalender in den Cache |
-| `refresh_results` | 1 h | Ergebnisse gestarteter Rennen in den Cache |
-| `refresh_rosters` | **24 h** | Kader aller Teams in die Datenbank + UCI-Punkte-Platzhalter |
-| `refresh_rider_details` | 3 min | Rückstand: Team-Historie und Strava-Abgleich |
-| `refresh_race_history` | 3 min | Renn-Seeding und Detail-Backfill |
-| `refresh_news` | 15 min | RSS-Feeds |
+| Job | Takt | Zeitbudget | Pool | Was er tut |
+|---|---|---|---|---|
+| `refresh_teams` | 24 h | – | scrape | WorldTeams-Übersicht in den Cache |
+| `refresh_calendar` | 24 h | – | scrape | Saison-Kalender in den Cache |
+| `refresh_results` | 1 h | – | scrape | Ergebnisse gestarteter Rennen in den Cache |
+| `refresh_rosters` | 24 h | – | scrape | Kader aller Teams + UCI-Punkte-Platzhalter |
+| `refresh_rider_details` | 15 min | 120 s | scrape | Rückstand: Team-Historie, Strava |
+| `refresh_race_history` | 15 min | 600 s | scrape | Renn-Seeding und Detail-Backfill |
+| `refresh_news` | 15 min | – | default | RSS-Feeds |
+
+### Ein Worker für alles, was Wikipedia abfragt
+
+Der `scrape`-Pool hat genau **einen** Worker. Parallelität bringt dort nichts:
+`scrapers/http.py` lässt ohnehin nur einen Request alle
+`SCRAPER_REQUEST_DELAY_SECONDS` pro Host durch. Zwei gleichzeitige
+Wikipedia-Jobs haben sich deshalb nur gegenseitig ausgebremst - jeder lief
+doppelt so lange, beide überschritten ihr Intervall, und APScheduler verwarf
+die nächsten Läufe (`maximum number of running instances reached`, belegt in
+den Render-Logs vom 12.09.). Der Newsfeed läuft im `default`-Pool, weil er
+andere Hosts anspricht und nicht hinter den Wikipedia-Jobs warten soll.
+
+**Achtung bei der Umstellung auf einen Worker:** ein Job, der auf den Worker
+wartet, startet später als geplant - und APSchedulers Default
+(`misfire_grace_time=1s`) verwirft ihn dann komplett. In einem Testlauf lief
+`refresh_rider_details` dadurch **gar nicht mehr**, es war nur eine andere
+Art, Läufe zu verlieren. Deshalb ist `misfire_grace_time` auf das jeweilige
+Intervall gesetzt: eine Verspätung von bis zu einem Intervall ist hier
+unkritisch, besser spät als nie. Dazu ein Startversatz
+(`JOB_START_STAGGER_SECONDS`), damit sich beim Hochfahren nicht alle Jobs
+gleichzeitig anstellen.
+
+### Zeitbudget statt fester Batch-Größe
+
+Die beiden Rückstands-Jobs arbeiten sich durch eine Warteschlange von Stunden
+bis Tagen. Vorher holten sie eine feste Zahl Einträge pro Lauf - die Laufzeit
+hing damit vom Inhalt ab (ein Etappenrennen kostet ein Vielfaches an Abrufen
+gegenüber einem Eintagesrennen) und lag regelmäßig über dem Intervall.
+
+Jetzt arbeiten sie, solange Budget übrig ist (`scheduler.Budget`). Die
+Batch-Größe ist nur noch das Abfrage-Fenster, die Laufzeit bestimmt das
+Budget - und bleibt damit vorhersagbar unter dem Intervall.
+
+Zwei Fallstricke, die dabei einzubauen waren:
+
+- Ein fehlgeschlagener Eintrag behält `results_fetched_at`/`history_fetched_at`
+  auf `NULL` und käme in der nächsten Batch-Abfrage **desselben Laufs** sofort
+  wieder. Ohne Gegenmaßnahme verbrennt der Job sein Budget auf denselben
+  kaputten Seiten. Beide Schleifen merken sich die versuchten IDs.
+- Das Abfrage-Fenster muss um die bereits versuchten wachsen
+  (`limit=batch + len(attempted)`), sonst liefert die Abfrage immer wieder
+  dieselben gescheiterten Einträge und der Lauf kommt nie an ihnen vorbei.
+  Getestet mit 20 dauerhaft kaputten Rennen vor 23 intakten: die intakten
+  werden abgearbeitet, nur die kaputten bleiben offen.
+
+### Einen Job einzeln ausführen
+
+```bash
+cd backend
+python -m app.scheduler refresh_race_history
+```
+
+Greift auf dieselbe `JOBS`-Liste zu wie der Scheduler - es gibt also keine
+zweite Registrierung, die auseinanderlaufen kann.
+
+**Wofür das gedacht ist:** Der Renn-Backfill braucht durchgängige Laufzeit,
+die eine kostenlose Web-Instanz nicht liefert - Render setzt sie nach ~15
+Minuten ohne Requests schlafen, und der Scheduler-Thread pausiert mit. Der
+richtige Ort für den Bestandsaufbau ist deshalb ein **Render Cron Job** oder
+ein Background Worker, nicht ein Thread im Webserver:
+
+| Feld | Wert |
+|---|---|
+| Build Command | `cd backend && pip install -r requirements.txt` |
+| Command | `cd backend && python -m app.scheduler refresh_race_history` |
+| Schedule | z.B. `*/20 * * * *` |
+| Env: `DATABASE_URL` | aus `peletonpro-db` |
+| Env: `RACE_HISTORY_RUN_SECONDS` | passend zum Schedule wählen |
+
+Solange das nicht eingerichtet ist, läuft der Backfill nur, wenn die
+Web-Instanz wach ist.
 
 `refresh_rosters` und `refresh_rider_details` waren bis vor Kurzem **ein**
 Job (`refresh_riders`) mit gemeinsamem Drei-Minuten-Takt. Das hieß: alle drei
