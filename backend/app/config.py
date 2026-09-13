@@ -43,12 +43,19 @@ REFRESH_INTERVAL_CALENDAR = int(os.environ.get("REFRESH_INTERVAL_CALENDAR", str(
 REFRESH_INTERVAL_RESULTS = int(os.environ.get("REFRESH_INTERVAL_RESULTS", str(60 * 60)))
 REFRESH_INTERVAL_NEWS = int(os.environ.get("REFRESH_INTERVAL_NEWS", str(15 * 60)))
 
-# Fahrer-Datenbank: läuft häufiger als die anderen Jobs, weil sie beim
-# ersten Befüllen der (persistenten) Datenbank batchweise durch alle
-# Fahrer ohne Historie arbeitet (siehe scheduler.refresh_riders). Ist die
-# Datenbank einmal vollständig, wird jeder Lauf sehr billig (kein
-# Rückstand mehr abzuarbeiten), daher schadet das kurze Intervall nicht.
-REFRESH_INTERVAL_RIDERS = int(os.environ.get("REFRESH_INTERVAL_RIDERS", str(3 * 60)))
+# Fahrer-Kader (scheduler.refresh_rosters): ein Wikipedia-Abruf pro Team.
+# Kader ändern sich ein paar Mal im Jahr (Transferperiode, Nachverpflich-
+# tungen), nicht minütlich - ein Tagestakt reicht völlig. Vorher lief das
+# im selben Job wie der Rückstands-Abbau und damit alle drei Minuten: 18
+# Wikipedia-Seiten und 517 Fahrer-Schreibzugriffe pro Lauf, was den teuren
+# Renn-Detail-Backfill ausgehungert hat (siehe README, "Hintergrund-Jobs").
+REFRESH_INTERVAL_ROSTERS = int(os.environ.get("REFRESH_INTERVAL_ROSTERS", str(24 * 60 * 60)))
+
+# Fahrer-Details (scheduler.refresh_rider_details): Team-Wechsel-Historie
+# und Strava-Abgleich für Fahrer, die noch keine haben. Behält den kurzen
+# Takt, weil der Job batchweise durch einen Rückstand arbeitet - ist der
+# abgebaut, kostet ein Lauf zwei billige Abfragen und sonst nichts.
+REFRESH_INTERVAL_RIDER_DETAILS = int(os.environ.get("REFRESH_INTERVAL_RIDER_DETAILS", str(3 * 60)))
 RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
 
 # Strava-Profil-Abgleich über Wikidata (siehe scrapers/wikidata.py) - läuft

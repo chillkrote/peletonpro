@@ -254,7 +254,7 @@ def upsert_riders(riders: list[dict]) -> int:
     row a second time"); bei executemany ist jede Zeile ein eigenes
     Statement, sodass es hier technisch durchläuft - fachlich wäre es aber
     ein stiller Last-Write-Wins wie bisher. Der Aufrufer entdoppelt daher
-    vorher (siehe scheduler.refresh_riders)."""
+    vorher (siehe scheduler.refresh_rosters)."""
     if not riders:
         return 0
     missing = [k for k in RIDER_FIELDS if k not in riders[0]]
@@ -289,6 +289,42 @@ def upsert_rider(
         "wiki_url": wiki_url,
         "current_team_id": current_team_id,
     }])
+
+
+RIDER_FINGERPRINT_FIELDS = (
+    "name", "first_name", "last_name", "country", "birth_date",
+    "wiki_url", "current_team_id",
+)
+
+
+def get_rider_fingerprints() -> dict[str, tuple]:
+    """Liefert je Fahrer-ID ein Tupel der Felder, die ein Kader-Scrape
+    schreibt - damit der Scheduler unveränderte Fahrer überspringen kann,
+    statt sie bei jedem Lauf neu zu schreiben (siehe
+    scheduler.refresh_rosters).
+
+    Bewusst NICHT über last_updated entschieden: dieser Zeitstempel wird von
+    jedem Upsert neu gesetzt und sagt deshalb nur, wann zuletzt geschrieben
+    wurde, nicht ob sich etwas geändert hat. `birth_date` kommt aus Postgres
+    als date-Objekt, vom Scraper dagegen als ISO-String - hier auf ISO
+    normalisiert, damit der Vergleich nicht an der Darstellung scheitert."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT id, {', '.join(RIDER_FINGERPRINT_FIELDS)} FROM riders"
+        ).fetchall()
+    return {
+        row["id"]: tuple(
+            row[f].isoformat() if f == "birth_date" and row[f] is not None else row[f]
+            for f in RIDER_FINGERPRINT_FIELDS
+        )
+        for row in rows
+    }
+
+
+def rider_fingerprint(rider_row: dict) -> tuple:
+    """Gegenstück zu get_rider_fingerprints für einen frisch gescrapten
+    Datensatz (siehe upsert_riders für das Format)."""
+    return tuple(rider_row.get(f) for f in RIDER_FINGERPRINT_FIELDS)
 
 
 def get_riders_missing_history(limit: int) -> list[dict]:
@@ -371,7 +407,7 @@ def get_riders(team_id: Optional[str] = None) -> list[Rider]:
         params = (team_id,)
     # Standard-Sortierung nach Nachname (siehe README) - NULLS LAST betrifft
     # nur das kurze Zeitfenster direkt nach dem Schema-Update, bevor der
-    # nächste refresh_riders-Lauf first_name/last_name für alle nachträgt.
+    # nächste refresh_rosters-Lauf first_name/last_name für alle nachträgt.
     query += " ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name"
     with _connect() as conn:
         rows = conn.execute(query, params).fetchall()

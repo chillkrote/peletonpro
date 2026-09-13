@@ -175,9 +175,11 @@ wäre.
   Zugriffsfunktionen. `is_configured()` prüft, ob `DATABASE_URL` gesetzt
   ist; ohne sie bleiben `/api/riders*` leer/deaktiviert, der Rest der App
   läuft unverändert weiter.
-- **`scheduler.refresh_riders`** - läuft alle `REFRESH_INTERVAL_RIDERS`
-  Sekunden (Default 3 Min): aktualisiert zuerst die Kader aller aktuellen
-  Teams (schnell, ein Abruf pro Team), holt danach die volle Historie für
+- **`scheduler.refresh_rosters`** - läuft alle `REFRESH_INTERVAL_ROSTERS`
+  Sekunden (Default 24 h): aktualisiert die Kader aller aktuellen Teams
+  (ein Abruf pro Team) und schreibt nur geänderte Fahrer.
+- **`scheduler.refresh_rider_details`** - läuft alle
+  `REFRESH_INTERVAL_RIDER_DETAILS` Sekunden (Default 3 Min): holt die volle Historie für
   bis zu `RIDER_HISTORY_BATCH_SIZE` Fahrer (Default 30), die noch keine
   haben (`history_fetched_at IS NULL`) - verteilt die ~500 nötigen Abrufe
   also über mehrere Läufe statt eines einzigen ~20-minütigen Blocks. Ist
@@ -213,8 +215,8 @@ wäre.
   Nachwuchszeit), zählen bewusst NICHT als World-Tour-Saison. Ein offenes
   Ende ("2019–", aktuelles Team) läuft bis `RACE_SEASON_YEAR`.
 - **Strava-Profile:** `riders.strava_url` wird von
-  `scrapers/wikidata.py` befüllt, im selben `refresh_riders`-Job wie die
-  Team-Historie, gebatcht über `STRAVA_BATCH_SIZE` Fahrer pro Lauf
+  `scrapers/wikidata.py` befüllt, im selben `refresh_rider_details`-Job wie
+  die Team-Historie, gebatcht über `STRAVA_BATCH_SIZE` Fahrer pro Lauf
   (`strava_checked_at IS NULL`). Statt einer Ad-hoc-Websuche pro Fahrer
   (skaliert nicht für ~500 Fahrer und ist nicht Teil dieser
   Scraping-Architektur) wird die öffentliche, strukturierte
@@ -246,7 +248,7 @@ abrufbare Quelle dafür:
 
 Da die Werte später aus einer anderen Datenbank nachgetragen werden
 sollen, legt `db.ensure_season_point_placeholders()` (läuft in jedem
-`refresh_riders`-Zyklus) für **jede** WorldTour-Saison eines Fahrers eine
+`refresh_rosters`-Zyklus, also täglich) für **jede** WorldTour-Saison eines Fahrers eine
 feste Platzhalter-Zeile in der neuen Tabelle `rider_season_points`
 (`rider_id`, `year`, `uci_points` - `uci_points` initial `NULL`) an,
 per SQL aus den vorhandenen `rider_team_stints` abgeleitet
@@ -441,6 +443,50 @@ API läuft dann unter `http://localhost:8001`, z.B.
    nutzen oder den Service während des Backfills regelmäßig anpingen
    (z.B. `curl .../api/health` per Cron).
 
+## Hintergrund-Jobs
+
+| Job | Takt | Was er tut |
+|---|---|---|
+| `refresh_teams` | 24 h | WorldTeams-Übersicht in den Cache |
+| `refresh_calendar` | 24 h | Saison-Kalender in den Cache |
+| `refresh_results` | 1 h | Ergebnisse gestarteter Rennen in den Cache |
+| `refresh_rosters` | **24 h** | Kader aller Teams in die Datenbank + UCI-Punkte-Platzhalter |
+| `refresh_rider_details` | 3 min | Rückstand: Team-Historie und Strava-Abgleich |
+| `refresh_race_history` | 3 min | Renn-Seeding und Detail-Backfill |
+| `refresh_news` | 15 min | RSS-Feeds |
+
+`refresh_rosters` und `refresh_rider_details` waren bis vor Kurzem **ein**
+Job (`refresh_riders`) mit gemeinsamem Drei-Minuten-Takt. Das hieß: alle drei
+Minuten 18 Wikipedia-Seiten abrufen und 517 Fahrer neu schreiben, für Daten,
+die sich ein paar Mal im Jahr ändern (Transferperiode, Nachverpflichtungen).
+Weil alle Scraper sich in `scrapers/http.py` eine Drosselung von zwei
+Sekunden pro Host teilen, hat dieser Job damit den Renn-Detail-Backfill
+ausgehungert - und beide Jobs liefen länger als ihr eigenes Intervall, sodass
+APScheduler laufend Läufe verwarf (`maximum number of running instances
+reached`).
+
+Der Kader-Teil läuft jetzt im Tagestakt, der Rückstands-Abbau behält den
+kurzen. Damit sinken die Wikipedia-Abrufe für Kader von bis zu **18 alle drei
+Minuten** auf **18 pro Tag**.
+
+### Nur schreiben, was sich geändert hat
+
+`refresh_rosters` vergleicht jeden gescrapten Fahrer mit dem Stand in der
+Datenbank (`db.get_rider_fingerprints`) und schreibt nur die Abweichungen.
+Gemessen mit 18 Teams und 517 Fahrern gegen eine lokale Postgres-16-Instanz:
+
+| Lauf | geschriebene Fahrer | SQL-Abfragen |
+|---|---|---|
+| 1 (Erstbefüllung) | 517 | 3 |
+| 2 (unverändert) | **0** | 2 |
+| 3 (ein Wechsel) | 1 | 3 |
+
+Der Vergleich läuft bewusst **nicht** über `last_updated`: dieser Zeitstempel
+wird von jedem Upsert neu gesetzt und sagt nur, wann zuletzt geschrieben
+wurde, nicht ob sich etwas geändert hat. `birth_date` kommt aus Postgres als
+`date`-Objekt und vom Scraper als ISO-String und wird vor dem Vergleich
+normalisiert - sonst gälte jeder Fahrer bei jedem Lauf als geändert.
+
 ## Datenbank-Zugriff: Verbindungs-Pool
 
 Alle Zugriffe in `app/db.py` und `app/db_races.py` laufen über einen
@@ -475,7 +521,7 @@ Web-Prozess plus ein Scheduler mit wenigen Threads braucht nicht mehr.
 `upsert_teams(list)` und `upsert_riders(list)` schreiben per `executemany` in
 einer Transaktion; die Einzel-Varianten `upsert_team`/`upsert_rider`
 delegieren daran, damit das SQL nur an einer Stelle steht.
-`scheduler.refresh_riders` sammelt erst alle Kader und schreibt dann einmal -
+`scheduler.refresh_rosters` sammelt erst alle Kader und schreibt dann einmal -
 die Fehlerbehandlung pro Team bleibt, ein Team mit geänderter Wikipedia-Seite
 reißt die übrigen nicht mit.
 

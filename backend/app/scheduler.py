@@ -20,7 +20,8 @@ from .config import (
     REFRESH_INTERVAL_NEWS,
     REFRESH_INTERVAL_RACE_HISTORY,
     REFRESH_INTERVAL_RESULTS,
-    REFRESH_INTERVAL_RIDERS,
+    REFRESH_INTERVAL_RIDER_DETAILS,
+    REFRESH_INTERVAL_ROSTERS,
     REFRESH_INTERVAL_TEAMS,
     RIDER_HISTORY_BATCH_SIZE,
     STRAVA_BATCH_SIZE,
@@ -99,23 +100,29 @@ def refresh_results() -> None:
         cache.mark_error("results", "; ".join(errors))
 
 
-def refresh_riders() -> None:
-    """Baut die (persistente) Fahrer-Datenbank auf: aktuelle Kader aller
-    WorldTeams (schnell, ein Abruf pro Team) sowie Team-Wechsel-Historie für
-    Fahrer, die noch keine haben (langsam, ein Abruf pro Fahrer - daher
-    batchweise über mehrere Job-Läufe verteilt, siehe RIDER_HISTORY_BATCH_SIZE).
+def refresh_rosters() -> None:
+    """Aktuelle Kader aller WorldTeams (ein Wikipedia-Abruf pro Team) in die
+    Datenbank schreiben, plus die UCI-Punkte-Platzhalter.
 
-    Übersprungen, wenn keine Fahrer-Datenbank konfiguriert ist (DATABASE_URL
+    Läuft auf einem eigenen, langsamen Takt (REFRESH_INTERVAL_ROSTERS,
+    Default 24 h). Vorher steckte das im selben Job wie der Rückstands-
+    Abbau und lief damit alle drei Minuten: 18 Wikipedia-Seiten und 517
+    Fahrer-Schreibzugriffe pro Lauf, für Daten, die sich ein paar Mal im
+    Jahr ändern. Das hat den Großteil der Job-Laufzeit und der
+    Wikipedia-Requests verbraucht und den teuren Renn-Detail-Backfill
+    ausgehungert (siehe backend/README.md, Abschnitt "Hintergrund-Jobs").
+
+    Übersprungen, wenn keine Datenbank konfiguriert ist (DATABASE_URL
     fehlt, siehe app/db.py) oder noch keine Teams im Cache sind.
     """
     if not db.is_configured():
-        logger.info("Fahrer-Refresh übersprungen: keine Fahrer-Datenbank konfiguriert (DATABASE_URL fehlt)")
+        logger.info("Kader-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
         return
 
     teams_entry = cache.get("teams")
     teams_data = teams_entry.get("data") if teams_entry else None
     if not teams_data:
-        logger.info("Fahrer-Refresh übersprungen: noch keine Teams im Cache")
+        logger.info("Kader-Refresh übersprungen: noch keine Teams im Cache")
         return
 
     teams = [Team(**t) for t in teams_data]
@@ -124,11 +131,9 @@ def refresh_riders() -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Team-Upsert fehlgeschlagen (%d Teams): %s", len(teams), exc)
 
-    # Erst alle Kader sammeln, dann EINMAL schreiben. Vorher eine eigene
-    # Postgres-Verbindung pro Fahrer - bei ~517 Fahrern über 500
-    # Verbindungsaufbauten pro Lauf. Die Fehlerbehandlung pro Team bleibt:
-    # ein Team, dessen Wikipedia-Seite sich geändert hat, darf die übrigen
-    # nicht mitreißen.
+    # Erst alle Kader sammeln, dann EINMAL schreiben. Die Fehlerbehandlung
+    # pro Team bleibt: ein Team, dessen Wikipedia-Seite sich geändert hat,
+    # darf die übrigen nicht mitreißen.
     rider_rows: list[dict] = []
     seen_rider_ids: set[str] = set()
     duplicates = 0
@@ -141,11 +146,8 @@ def refresh_riders() -> None:
         for rider_id, rider in roster:
             # Ein Fahrer kann auf zwei Kadern stehen (bei Wechseln listen ihn
             # beide Team-Artikel). Innerhalb eines Batches muss jede ID genau
-            # einmal vorkommen; der erste Treffer gewinnt. Dass die Auswahl
-            # hier willkürlich ist, war auch vorher so (Last-Write-Wins über
-            # die Iterationsreihenfolge) - sie ist jetzt nur sichtbar und
-            # gezählt. Die saubere Lösung ist eine Zuordnung pro Saison,
-            # siehe README ("Bekannte Lücken").
+            # einmal vorkommen; der erste Treffer gewinnt. Die saubere Lösung
+            # ist eine Zuordnung pro Saison, siehe README ("Bekannte Lücken").
             if rider_id in seen_rider_ids:
                 duplicates += 1
                 continue
@@ -162,17 +164,51 @@ def refresh_riders() -> None:
                 "current_team_id": team.id,
             })
 
+    # Nur schreiben, was sich tatsächlich geändert hat. Ohne diesen Vergleich
+    # schreibt jeder Lauf alle ~517 Fahrer neu, auch wenn kein einziges Feld
+    # anders ist - das setzt last_updated neu und erzeugt Schreiblast ohne
+    # jeden Informationsgewinn.
     try:
-        written = db.upsert_riders(rider_rows)
+        known = db.get_rider_fingerprints()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Fahrer-Upsert fehlgeschlagen (%d Fahrer): %s", len(rider_rows), exc)
+        logger.warning("Fahrer-Vergleichsstand nicht lesbar, schreibe alle: %s", exc)
+        known = {}
+    changed = [r for r in rider_rows if known.get(r["id"]) != db.rider_fingerprint(r)]
+
+    try:
+        written = db.upsert_riders(changed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Fahrer-Upsert fehlgeschlagen (%d Fahrer): %s", len(changed), exc)
         written = 0
     logger.info(
-        "Fahrer-Kader aktualisiert: %d Fahrer über %d Teams%s",
+        "Kader aktualisiert: %d von %d Fahrern geändert, %d Teams%s",
         written,
+        len(rider_rows),
         len(teams),
         f", {duplicates} Doppelnennungen übersprungen" if duplicates else "",
     )
+
+    try:
+        new_placeholders = db.ensure_season_point_placeholders()
+        if new_placeholders:
+            logger.info("UCI-Punkte-Platzhalter angelegt: %d neue Saison-Einträge", new_placeholders)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("UCI-Punkte-Platzhalter-Anlage fehlgeschlagen: %s", exc)
+
+
+def refresh_rider_details() -> None:
+    """Arbeitet den Rückstand ab: Team-Wechsel-Historie für Fahrer ohne
+    history_fetched_at (ein Wikipedia-Abruf pro Fahrer) und den
+    Wikidata-Strava-Abgleich für Fahrer ohne strava_checked_at (gebatcht,
+    zwei Requests je bis zu 50 Fahrer).
+
+    Behält das kurze Intervall (REFRESH_INTERVAL_RIDER_DETAILS): solange ein
+    Rückstand besteht, soll er zügig abgebaut werden; ist er leer, kostet ein
+    Lauf zwei billige Abfragen und nichts weiter.
+    """
+    if not db.is_configured():
+        logger.info("Fahrer-Detail-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
+        return
 
     pending = db.get_riders_missing_history(limit=RIDER_HISTORY_BATCH_SIZE)
     fetched = 0
@@ -192,13 +228,6 @@ def refresh_riders() -> None:
             len(pending),
             remaining,
         )
-
-    try:
-        new_placeholders = db.ensure_season_point_placeholders()
-        if new_placeholders:
-            logger.info("UCI-Punkte-Platzhalter angelegt: %d neue Saison-Einträge", new_placeholders)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("UCI-Punkte-Platzhalter-Anlage fehlgeschlagen: %s", exc)
 
     pending_strava = db.get_riders_missing_strava(limit=STRAVA_BATCH_SIZE)
     if pending_strava:
@@ -319,7 +348,8 @@ JOBS = [
     (refresh_teams, REFRESH_INTERVAL_TEAMS, "refresh_teams"),
     (refresh_calendar, REFRESH_INTERVAL_CALENDAR, "refresh_calendar"),
     (refresh_results, REFRESH_INTERVAL_RESULTS, "refresh_results"),
-    (refresh_riders, REFRESH_INTERVAL_RIDERS, "refresh_riders"),
+    (refresh_rosters, REFRESH_INTERVAL_ROSTERS, "refresh_rosters"),
+    (refresh_rider_details, REFRESH_INTERVAL_RIDER_DETAILS, "refresh_rider_details"),
     (refresh_race_history, REFRESH_INTERVAL_RACE_HISTORY, "refresh_race_history"),
     (refresh_news, REFRESH_INTERVAL_NEWS, "refresh_news"),
 ]
