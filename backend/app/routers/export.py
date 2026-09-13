@@ -23,10 +23,11 @@ import os
 import secrets
 from typing import Callable, Iterator
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from .. import db, db_races
+from ..ratelimit import RATE_LIMIT_EXPORT, limiter
 from .messages import RIDERS_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -84,42 +85,49 @@ def _export(open_export: Callable[[], object], filename: str) -> StreamingRespon
 
 
 @router.get("/teams.csv")
-def export_teams_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_teams_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db.export_teams, "teams.csv")
 
 
 @router.get("/riders.csv")
-def export_riders_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_riders_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db.export_riders, "riders.csv")
 
 
 @router.get("/stints.csv")
-def export_stints_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_stints_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db.export_stints, "rider_team_stints.csv")
 
 
 @router.get("/seasons.csv")
-def export_seasons_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_seasons_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db.export_seasons, "rider_seasons.csv")
 
 
 @router.get("/races.csv")
-def export_races_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_races_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db_races.export_races, "races.csv")
 
 
 @router.get("/race_results.csv")
-def export_race_results_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_race_results_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db_races.export_race_results, "race_results.csv")
 
 
 @router.get("/race_stages.csv")
-def export_race_stages_csv(authorization: str | None = Header(default=None)):
+@limiter.limit(RATE_LIMIT_EXPORT)
+def export_race_stages_csv(request: Request, authorization: str | None = Header(default=None)):
     _check_token(authorization)
     return _export(db_races.export_race_stages, "race_stages.csv")

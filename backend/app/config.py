@@ -98,6 +98,16 @@ RACE_HISTORY_START_YEAR = int(os.environ.get("RACE_HISTORY_START_YEAR", "2020"))
 RACE_HISTORY_DETAIL_BATCH_SIZE = int(os.environ.get("RACE_HISTORY_DETAIL_BATCH_SIZE", "15"))
 RACE_HISTORY_CIRCUITS = ("africa", "asia", "europe", "america", "oceania")
 
+# Ohne DATABASE_URL läuft die App weiter und liefert leere Fahrer- und
+# Renn-Listen (siehe app/db.py, is_configured). Für lokale Entwicklung ist
+# das gewollt; in Produktion ist es eine Falle - genau das ist am 12.09.
+# passiert, als der Service nach dem Anlegen der Datenbank noch ohne
+# DATABASE_URL lief und stillschweigend leere Daten auslieferte.
+#
+# Mit REQUIRE_DATABASE=1 bricht der Start stattdessen ab. In render.yaml ist
+# die Variable für den Web-Service gesetzt.
+REQUIRE_DATABASE = os.environ.get("REQUIRE_DATABASE", "").strip().lower() in ("1", "true", "yes")
+
 CACHE_DIR = os.environ.get(
     "CACHE_DIR", os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 )
