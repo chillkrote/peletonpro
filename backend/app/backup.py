@@ -21,7 +21,7 @@ ZWEI VERFAHREN, automatisch gewählt:
    NICHT enthalten, dieser Weg ist dort also der reale.
 
 Das CSV-Verfahren sichert nur DATEN, nicht das Schema. Das ist Absicht: das
-Schema entsteht beim Start aus app/db.py und app/db_races.py (init_schema),
+Schema entsteht aus den Migrationen in backend/migrations (app/migrations.py),
 ist also im Repository versioniert und braucht kein Backup. Ein Restore läuft
 deshalb gegen eine Datenbank, in der das Schema bereits angelegt ist.
 
@@ -410,7 +410,8 @@ def _restore_csv(url: str, path: Path, order: list[str]) -> None:
                 "Diese Tabellen fehlen in der Zieldatenbank: "
                 + ", ".join(unknown)
                 + "\nDas CSV-Verfahren sichert nur Daten, kein Schema - erst das Schema "
-                "anlegen lassen (App starten oder init_schema aufrufen), dann restaurieren."
+                "anlegen lassen (App starten oder python -m app.migrations upgrade), "
+                "dann restaurieren."
             )
 
         # Ein TRUNCATE über alle Tabellen zugleich, CASCADE löst die
