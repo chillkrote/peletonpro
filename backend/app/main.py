@@ -9,9 +9,10 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from . import db, db_races
+from . import db
 from .config import CORS_ORIGINS, REQUIRE_DATABASE
 from .routers import export, news, race_history, riders, teams
+from .migrations import run_migrations
 from .ratelimit import limiter
 from .routers.messages import INTERNAL_ERROR
 from .scheduler import start_scheduler
@@ -131,15 +132,23 @@ async def lifespan(app: FastAPI):
             "Start abgebrochen, statt leere Daten auszuliefern."
         )
 
+    # Schema-Migrationen vor allem anderen: der Scheduler schreibt sofort
+    # nach dem Start, und zwar in Tabellen, die eine offene Migration
+    # gerade erst anlegt oder ändert. Hier standen vorher zwei Aufrufe von
+    # init_schema(), die bei JEDEM Start das komplette Schema-SQL neu
+    # ausführten, ohne dass irgendwo stand, welcher Stand gerade läuft
+    # (siehe app/migrations.py).
+    #
+    # Ein Fehler hier bricht den Start NICHT ab - dieselbe Abwägung wie
+    # vorher: ohne Datenbank liefert die App leere Listen und News
+    # weiterhin aus, und eine Instanz, die sich nicht starten lässt, ist
+    # beim Diagnostizieren schlechter als eine, die halb funktioniert und
+    # den Fehler loggt. Wer den harten Abbruch will, setzt
+    # REQUIRE_DATABASE.
     try:
-        db.init_schema()
+        run_migrations()
     except Exception as exc:  # noqa: BLE001 - App darf ohne DB weiterlaufen
-        logger.error("Fahrer-Datenbank-Schema konnte nicht initialisiert werden: %s", exc)
-
-    try:
-        db_races.init_schema()
-    except Exception as exc:  # noqa: BLE001 - App darf ohne DB weiterlaufen
-        logger.error("Renn-Historie-Schema konnte nicht initialisiert werden: %s", exc)
+        logger.error("Schema-Migrationen fehlgeschlagen: %s", exc)
 
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den

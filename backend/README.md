@@ -583,6 +583,141 @@ wurde, nicht ob sich etwas geändert hat. `birth_date` kommt aus Postgres als
 `date`-Objekt und vom Scraper als ISO-String und wird vor dem Vergleich
 normalisiert - sonst gälte jeder Fahrer bei jedem Lauf als geändert.
 
+## Schema-Migrationen
+
+Das Schema lag als String-Literal im Code - `SCHEMA` in `app/db.py`,
+`SCHEMA_RACES` in `app/db_races.py` - und wurde bei jedem App-Start neu
+ausgeführt, mit handschriftlich angehängten
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. Es gab keine Möglichkeit
+festzustellen, welcher Stand in Produktion läuft. Bei zwei Änderungen geht
+das; bei denen, die Frauen-Radsport und mehr Historie mitbringen (neue
+Spalten, neue Schlüssel, neue Tabellen), verliert man den Überblick.
+
+Jetzt: nummerierte `.sql`-Dateien in `backend/migrations/`, eine Tabelle
+`schema_migrations`, ein Runner in `app/migrations.py`.
+
+### Eine neue Migration anlegen
+
+Neue Datei `backend/migrations/NNNN_kurzer_name.sql` mit der nächsten
+freien Nummer anlegen und das SQL hineinschreiben - beim nächsten App-Start
+läuft sie automatisch. Eine bereits angewendete Datei darf **nicht** mehr
+geändert werden: der Runner prüft die Prüfsumme und bricht sonst ab;
+Korrekturen gehören in eine neue Migration.
+
+### Warum kein Alembic
+
+Alembics Wert liegt in der Autogenerierung aus SQLAlchemy-Modellen. Dieses
+Projekt hat kein ORM - es schreibt SQL direkt mit psycopg. Jede
+Alembic-Revision wäre hier ein `op.execute("...")` mit demselben SQL darin,
+nur mit Boilerplate obendrüber, plus eine Abhängigkeit, die SQLAlchemy auf
+eine 512-MB-Instanz zieht.
+
+Was stattdessen dasteht, sind rund 150 Zeilen: eine Tabelle, eine
+Reihenfolge, ein Lock. Der Preis ist, dass Alembics selten gebrauchte
+Fähigkeiten fehlen (Verzweigungen, Autogenerierung, `stamp`). Kommt später
+ein ORM dazu, ist der Wechsel ein `alembic stamp` auf den dann erreichten
+Stand - die Entscheidung verbaut nichts.
+
+### Kein Rückweg, absichtlich
+
+Es gibt kein `downgrade`. Ein Rückweg, der nur auf dem Papier existiert,
+ist gefährlicher als keiner: die meisten Schema-Rückwärtsschritte verlieren
+Daten (eine gelöschte Spalte kommt nicht zurück), und niemand probt sie.
+Der ehrliche Rückweg dieses Projekts ist das Backup (siehe Abschnitt
+"Backup") - vor einer Migration, die Daten anfasst, ein Dump; geht sie
+schief, ein Restore.
+
+### Wann und wie es läuft
+
+Im FastAPI-`lifespan` beim Start, vor dem Scheduler - dort, wo vorher die
+zwei `init_schema()`-Aufrufe standen. Renders Free-Plan bietet keinen
+Shell-Zugriff und kein `preDeployCommand`, ein Aufruf beim Start ist also
+der einzige Weg, der ohne Handarbeit funktioniert. Von Hand geht es auch:
+
+```bash
+cd backend
+python -m app.migrations status    # welcher Stand ist angewendet?
+python -m app.migrations upgrade   # offene Migrationen anwenden
+```
+
+Drei Eigenschaften, die beim Bauen jeweils erst durch einen Test
+sichtbar wurden:
+
+- **Advisory Lock.** Der Lauf hält `pg_advisory_lock`, damit zwei
+  gleichzeitig startende Instanzen nicht dieselbe Migration fahren. Das
+  Lock hängt an der Verbindung und fällt mit ihr weg - anders als ein
+  selbstgebautes "Sperre"-Feld in einer Tabelle, das nach einem Absturz
+  hängen bleibt.
+- **Autocommit, und eine eigene Verbindung.** Läge der ganze Lauf in einer
+  Transaktion, würden alle Migrationen zusammen am Ende committen: bricht
+  das ab, ist auch die erste, längst erfolgreiche Migration weg. Jede
+  Migration bekommt deshalb ihre eigene Transaktion, zusammen mit ihrem
+  Eintrag in `schema_migrations` - ein halb angewendeter Stand, der als
+  angewendet gilt, wäre das schlimmere Ergebnis.
+
+  Die Verbindung dafür kommt **nicht** aus dem Pool. `autocommit` bleibt
+  sonst an der zurückgegebenen Verbindung hängen (psycopg_pool stellt es
+  nicht wieder her), und der nächste Nutzer derselben Verbindung steht in
+  Autocommit - womit die server-side Cursor des CSV-Exports brechen
+  ("DECLARE CURSOR can only be used in transaction blocks"). Nachgemessen,
+  bevor das behoben war: vier von sieben CSV-Exporten lieferten HTTP 200
+  mit **leerem Rumpf**.
+- **`CREATE TABLE IF NOT EXISTS` ist nicht race-frei.** Existenzprüfung und
+  Anlegen sind zwei Schritte; dazwischen kann eine andere Sitzung die
+  Tabelle erzeugen, und dann schlägt das Anlegen mit `DuplicateTable` fehl -
+  trotz `IF NOT EXISTS`. Genau daran ist der zweite von zwei gleichzeitigen
+  Läufen gescheitert, bevor der Lock vor dem Katalog-Zugriff lag. Der Fall
+  wird zusätzlich abgefangen: dass die Tabelle schon da ist, war ja das
+  Ziel.
+
+### Die erste Migration und die laufende Produktion
+
+`0001_bestand.sql` ist der Schemastand von vorher, wörtlich aus den beiden
+String-Literalen übernommen. Sie läuft auch gegen die bestehende
+Produktionsdatenbank, in der alles schon existiert - dort fehlt
+`schema_migrations`, 0001 gilt also als nicht angewendet. Sie ist deshalb
+durchgehend idempotent (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`) und
+rührt vorhandene Daten nicht an. Genau so lief dieses SQL vorher bei jedem
+Start.
+
+Ab `0002` ist diese Rücksicht nicht mehr nötig: dann ist bekannt, welcher
+Stand angewendet wurde, und gewöhnliches `ALTER TABLE` genügt.
+
+### Prüfen
+
+```bash
+PGPORT=5599 ./scripts/check-migrations.sh
+```
+
+Das Skript legt Testdatenbanken an und prüft sieben Dinge: leeres Schema
+wird aufgebaut, ein zweiter Lauf tut nichts, eine Datenbank im
+Produktionsstand (Tabellen inkl. der per `ALTER` ergänzten Spalten, mit
+Daten) wird ohne jede Änderung an Zeilen oder Feldern migriert, das so
+entstandene Schema ist identisch zu dem aus einer leeren Datenbank, eine
+nachträglich geänderte Migration bricht ab, eine fehlerhafte lässt nichts
+halb angewendet zurück, und zwei gleichzeitige Läufe wenden dieselbe
+Migration genau einmal an.
+
+Den Produktionsstand für Schritt 3 holt das Skript per `git show` aus
+`origin/main` - also aus dem Code, der wirklich lief, nicht aus dem
+aktuellen Baum. Die Testdaten stehen im Skript selbst: als sie noch in
+einer externen Datei lagen, scheiterte das Einspielen einmal still, und
+die Vergleiche verglichen 0 Zeilen mit 0 Zeilen und bestanden scheinbar.
+Das Skript bricht jetzt ab, wenn keine Testdaten drin sind.
+
+### Bekannte Grenze des CSV-Exports (nicht des Backups)
+
+Scheitert die Abfrage eines `/api/export/*.csv`-Endpunkts erst nachdem das
+Streamen begonnen hat, ist der Statuscode 200 schon gesendet - der Client
+bekommt eine abgeschnittene oder leere Datei, die wie ein Erfolg aussieht.
+Das liegt am Streaming selbst und nicht an einer verschluckten Exception.
+
+Das **Backup** teilt diese Grenze nicht: `app/backup.py` verbindet sich
+direkt per psycopg, geht nicht über HTTP, und `verify` vergleicht die
+Zeilenzahlen im Manifest gegen die Datenbank. Ein abgeschnittener Dump
+fällt dort auf. Wer die CSV-Endpunkte für ein Backup benutzt, sollte die
+Zeilenzahlen selbst gegenprüfen.
+
 ## Datenbank-Zugriff: Verbindungs-Pool
 
 Alle Zugriffe in `app/db.py` und `app/db_races.py` laufen über einen
@@ -1213,8 +1348,9 @@ stillschweigend scheitern würde), sonst `csv`.
 
 **Auf Renders Python-Image ist `pg_dump` nicht enthalten**, dort greift also
 der CSV-Weg. Das ist kein Nachteil für den Zweck: das Schema entsteht beim
-Start ohnehin aus `app/db.py` / `app/db_races.py` (`init_schema`) und ist im
-Repository versioniert - gesichert werden müssen die Daten. Wer einen
+Start ohnehin aus den Migrationen (`backend/migrations`, siehe
+"Schema-Migrationen") und ist im Repository versioniert - gesichert werden
+müssen die Daten. Wer einen
 vollständigen, schema-inklusiven Dump will, ruft das Skript lokal gegen die
 **External Database URL** auf; dort ist `pg_dump` meist vorhanden.
 
