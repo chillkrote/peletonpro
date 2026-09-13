@@ -11,6 +11,16 @@ const API_BASE =
 async function apiGet(path) {
     const response = await fetch(`${API_BASE}${path}`);
     if (!response.ok) {
+        // 429 ist kein Defekt, sondern die Drosselung der API (siehe
+        // backend/app/ratelimit.py). Eine Meldung wie "API-Fehler 429" wäre
+        // für Besucher nicht deutbar.
+        if (response.status === 429) {
+            const retry = Number(response.headers.get('Retry-After'));
+            const wann = Number.isFinite(retry) && retry > 0
+                ? `Bitte in ${retry} Sekunden erneut versuchen.`
+                : 'Bitte kurz warten und erneut versuchen.';
+            throw new Error(`Zu viele Anfragen. ${wann}`);
+        }
         throw new Error(`API-Fehler ${response.status} bei ${path}`);
     }
     return response.json();

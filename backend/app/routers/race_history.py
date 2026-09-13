@@ -1,9 +1,10 @@
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from .. import db, db_races
+from ..ratelimit import RATE_LIMIT_RACE_DETAIL, limiter
 from .messages import DB_UNAVAILABLE, RACES_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,11 @@ def list_seasons():
 
 
 @router.get("/{race_id}")
-def get_race(race_id: str):
+# Strenger als der Default: ein Aufruf löst mehrere Abfragen aus (Rennen,
+# Gesamt-Ergebnis, Etappen, Etappen-Ergebnisse). slowapi braucht dafür den
+# Request-Parameter, auch wenn die Funktion ihn selbst nicht benutzt.
+@limiter.limit(RATE_LIMIT_RACE_DETAIL)
+def get_race(request: Request, race_id: str):
     """Ein Rennen inkl. Gesamt-/Eintagesrennen-Ergebnis (`results`) und bei
     Mehretagenrennen der kompletten Etappenliste inkl. je Etappe eigener
     Ergebnisliste (`stages[].results`)."""

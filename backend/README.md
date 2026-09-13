@@ -725,6 +725,61 @@ User-Agent unterschiedliches CSS aus (verschiedene Font-Formate), der Hash
 ist also nicht stabil. Das Risiko ist der Art nach vergleichbar, der Weg
 dagegen wäre Selbst-Hosten der Schriften - bewusst nicht in diesem Schritt.
 
+### Rate Limiting
+
+Die API hat keine Authentifizierung, läuft auf einer einzigen Free-Instanz
+und hat teure Endpunkte. Ein Skript-Loop genügte, um Service und
+Verbindungskontingent lahmzulegen.
+
+Die Grenzen sind an echten Seitenaufrufen bemessen: Startseite 4 Requests,
+Team-Detail 4, Races 2 plus 1 pro aufgeklapptem Rennen. Ein Besucher, der
+zügig durchklickt, kommt auf 30-40 in wenigen Minuten.
+
+| Bereich | Grenze | Env-Var |
+|---|---|---|
+| alles übrige | 120/Minute | `RATE_LIMIT_DEFAULT` |
+| `/api/race-history/{id}` | 60/Minute | `RATE_LIMIT_RACE_DETAIL` |
+| `/api/export/*.csv` | 10/Stunde | `RATE_LIMIT_EXPORT` |
+| `/api/health` | **ausgenommen** | – |
+
+`/api/health` ist ausdrücklich ausgenommen: Render fragt den Pfad alle ~10
+Sekunden ab. Ohne die Ausnahme wurden im Test 30 von 40
+Health-Check-Requests mit 429 abgewiesen - Render hätte daraus eine kaputte
+Instanz gelesen und Deploys scheitern lassen.
+
+**Die echte Client-IP** kommt aus `X-Forwarded-For`, nicht aus
+`request.client.host` (das ist hinter Renders Router die Proxy-Adresse -
+alle Besucher lägen in einem gemeinsamen Kontingent). Gelesen wird vom
+**Ende** der Kette (`TRUSTED_PROXY_COUNT`, auf Render 1): der Proxy hängt
+die echte Adresse hinten an, der erste Eintrag ist client-kontrolliert und
+wäre fälschbar. Nachgemessen: ein gefälschter erster Eintrag verschafft kein
+frisches Kontingent.
+
+> **Stolperstelle bei einem FastAPI-Upgrade.** `SlowAPIMiddleware` ermittelt
+> die Route über `_find_route_handler(app.routes, scope)` und schaut nur eine
+> Ebene tief. Unter der gepinnten 0.115.0 flacht `include_router()` alle
+> Routen zu `APIRoute`-Objekten ab, die Auflösung funktioniert. Neuere
+> Versionen (nachgemessen mit 0.141.1) legen stattdessen ein opakes
+> `_IncludedRouter`-Objekt ohne `.endpoint` ab - die Middleware hält dann
+> **jede** Router-Route für ausgenommen und drosselt nichts, ohne jede
+> Fehlermeldung. `_check_ratelimit_coverage` prüft das beim Start und warnt.
+
+### Konfiguration: render.yaml und REQUIRE_DATABASE
+
+`backend/render.yaml` beschreibt **nicht** den laufenden Service: der wurde
+von Hand angelegt, und Render kann einen bestehenden Service nicht
+nachträglich einem Blueprint unterstellen. Die Datei dient als Dokumentation
+der richtigen Konfiguration und als Vorlage für einen Neuaufbau; wer sie
+anwendet, bekommt einen zweiten Service daneben. Sie war zusätzlich falsch
+(abweichender `rootDir`/`buildCommand`, kein `DATABASE_URL`, kein
+`healthCheckPath`) und ist jetzt korrekt.
+
+Ohne `DATABASE_URL` läuft die App weiter und liefert leere Listen - lokal
+gewollt, in Produktion eine Falle. Genau das ist am 12.09. passiert: der
+Service lief nach dem Anlegen der Datenbank noch ohne `DATABASE_URL` und
+lieferte stillschweigend leere Daten. Mit `REQUIRE_DATABASE=1` bricht der
+Start stattdessen ab.
+
 ### CSV-Export streamt wirklich
 
 `StreamingResponse` war Kosmetik: `fetchall()` holte alle Zeilen in eine
