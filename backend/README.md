@@ -755,6 +755,27 @@ die echte Adresse hinten an, der erste Eintrag ist client-kontrolliert und
 wäre fälschbar. Nachgemessen: ein gefälschter erster Eintrag verschafft kein
 frisches Kontingent.
 
+> **Jeder `@limiter.limit`-Endpunkt braucht `response: Response`** - sonst
+> antwortet er mit **500 auf jeden Aufruf**, nicht erst bei erreichter
+> Grenze. Weil `headers_enabled=True` gesetzt ist, ruft slowapi nach jedem
+> Aufruf `_inject_headers()` auf, um die `X-RateLimit-*`-Header zu setzen.
+> Gibt der Endpunkt keine `Response` zurück (sondern z.B. ein `dict`), holt
+> slowapi das Objekt aus einem Parameter namens `response` - und wirft, wenn
+> es den nicht gibt.
+>
+> Genau das ist hier passiert: `/api/race-history/{race_id}` war nach dem
+> Einbau von `headers_enabled` durchgehend kaputt, das Aufklappen eines
+> Rennens im Kalender lieferte nur noch 500. Die Drosselung selbst
+> funktionierte, es stand nirgends eine Warnung, und von außen war der
+> Fehler nicht von einem Datenbank-Problem zu unterscheiden. Die CSV-Exporte
+> waren nicht betroffen, weil sie eine `StreamingResponse` zurückgeben -
+> daher die Rückgabe-Annotationen `-> StreamingResponse` dort.
+>
+> `_check_ratelimit_headers` prüft beim Start jeden gedrosselten Endpunkt
+> darauf und protokolliert sonst einen Fehler mit Pfad und Funktionsname.
+> Gegengeprobt: mit entferntem Parameter meldet die Prüfung genau diesen
+> Endpunkt, mit Parameter meldet sie nichts.
+
 > **Stolperstelle bei einem FastAPI-Upgrade.** `SlowAPIMiddleware` ermittelt
 > die Route über `_find_route_handler(app.routes, scope)` und schaut nur eine
 > Ebene tief. Unter der gepinnten 0.115.0 flacht `include_router()` alle
