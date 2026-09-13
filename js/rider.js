@@ -7,7 +7,12 @@
 // einer anderen UCI-Punkte-Datenbank soll die Werte nachtragen) sowie,
 // darunter, alle Team-Stationen laut Wikipedia-Infobox (auch außerhalb der
 // World Tour, z.B. frühere Continental-Teams).
-document.addEventListener('DOMContentLoaded', async () => {
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { formatBirthDate } from './riders.js';
+import { errorPanel, loadingPanel, riderInitials, starten } from './ui.js';
+
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Fahrer' }] });
 
     const content = document.getElementById('rider-content');
@@ -27,8 +32,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         ]);
         renderRider(content, rider, teamsRes.teams || []);
     } catch (err) {
+        // 404 heißt: diese Fahrer-ID gibt es nicht. Alles andere ist ein
+        // Fehler auf unserer Seite - vorher stand in beiden Fällen "wurde
+        // nicht gefunden", auch wenn das Backend gar nicht erreichbar war.
+        // Nachgemessen mit abgeschaltetem Backend: die Seite behauptete, den
+        // Fahrer gebe es nicht. Gleiche Unterscheidung wie in js/team.js.
         console.error('Fehler beim Laden des Fahrers:', err);
-        content.innerHTML = errorPanel('Dieser Fahrer wurde nicht gefunden.');
+        content.innerHTML = err && err.status === 404
+            ? errorPanel('Dieser Fahrer wurde nicht gefunden.')
+            : errorPanel('Fahrer konnte nicht geladen werden.', 'Bitte später erneut versuchen.');
     }
 });
 

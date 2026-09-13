@@ -9,6 +9,13 @@
 // Zeile nachgeladen (GET /api/race-history/{id}) statt für alle Rennen
 // einer Saison vorab - bei teils 200+ Rennen/Saison wäre das zu viel auf
 // einmal.
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import {
+    errorPanel, formatCalendarDate, loadingPanel, pendingPanel, starten, statePanel,
+    todayCalendarIso,
+} from './ui.js';
+
 const CATEGORY_LABEL = { wt: 'World Tour', proseries: 'ProSeries', continental: 'Continental' };
 const CIRCUIT_LABEL = { africa: 'Africa Tour', asia: 'Asia Tour', europe: 'Europe Tour', america: 'America Tour', oceania: 'Oceania Tour' };
 
@@ -22,7 +29,7 @@ let selectedSeason = null;
 let selectedCategory = '';
 const detailCache = new Map();
 
-document.addEventListener('DOMContentLoaded', async () => {
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Races' }] });
 
     const content = document.getElementById('races-content');

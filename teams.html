@@ -32,10 +32,9 @@
         <p>&copy; 2026 PelotonPro · <a href="#">Impressum</a> · <a href="#">Datenschutz</a></p>
     </footer>
 
-    <script src="js/api.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/nav.js"></script>
-    <script src="js/riders.js"></script>
-    <script src="js/teams.js"></script>
+    <!-- Nur das Seiten-Modul: seine Abhängigkeiten
+         (js/api.js, js/ui.js, js/nav.js, ggf. js/riders.js)
+         zieht es selbst per import. -->
+    <script type="module" src="js/teams.js"></script>
 </body>
 </html>

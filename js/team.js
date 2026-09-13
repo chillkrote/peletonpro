@@ -3,7 +3,12 @@
 // Wikipedia-Link, Saison-Statistiken (Siege/Podestplätze/Top-10) aus den
 // Rennergebnissen, sowie den aktuellen Kader aus der Fahrer-Datenbank
 // (js/riders.js: renderTeamRoster) mit Link auf jedes Fahrerprofil.
-document.addEventListener('DOMContentLoaded', async () => {
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { renderTeamRoster } from './riders.js';
+import { errorPanel, formatCalendarDate, loadingPanel, starten, teamInitials } from './ui.js';
+
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Team' }] });
 
     const content = document.getElementById('team-content');

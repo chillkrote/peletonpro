@@ -1,5 +1,8 @@
 // ===== GEMEINSAME UI-HELFER =====
-// Wird von allen Seiten geladen, vor den seitenspezifischen Skripten.
+// ES-Modul. Wird von den Seiten-Modulen importiert, die die Helfer brauchen -
+// vorher lag alles hier im globalen Namensraum, und ob ein Helfer zur
+// Laufzeit da war, hing an der Reihenfolge der <script>-Tags.
+import { escapeHtml } from './api.js';
 //
 // Hier liegt, was mehr als eine Seite braucht: Datums-Formatierung,
 // Zustands-Panels (Laden/Fehler) und die Initialen für die Logo-Kreise.
@@ -27,6 +30,7 @@
 // gebaut, der LOKALE Mitternacht erzeugt. Damit stimmt die Anzeige in jeder
 // Zeitzone.
 
+// Modul-intern: Aufrufer nehmen formatCalendarDate.
 function parseCalendarDate(iso) {
     if (!iso) return null;
     const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
@@ -52,7 +56,7 @@ function parseCalendarDate(iso) {
 // Formatiert ein Kalenderdatum. `options` wie bei toLocaleDateString.
 // Liefert '' bei fehlendem oder unlesbarem Datum, damit Aufrufer nicht
 // jedes Mal selbst prüfen müssen.
-function formatCalendarDate(iso, options = { day: '2-digit', month: '2-digit', year: 'numeric' }) {
+export function formatCalendarDate(iso, options = { day: '2-digit', month: '2-digit', year: 'numeric' }) {
     const date = parseCalendarDate(iso);
     if (date === null || Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('de-DE', options);
@@ -61,7 +65,7 @@ function formatCalendarDate(iso, options = { day: '2-digit', month: '2-digit', y
 // Heutiges Datum als ISO-Kalenderdatum in der Zeitzone des Besuchers.
 // Bewusst NICHT über toISOString(): das liefert das UTC-Datum und läge an
 // den Tagesgrenzen gegen die lokal angezeigten Renndaten daneben.
-function todayCalendarIso() {
+export function todayCalendarIso() {
     const now = new Date();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
@@ -98,23 +102,23 @@ function todayCalendarIso() {
 // ist optional und wird weggelassen, statt einen Vorgabesatz zu erfinden.
 // `klasse` deckt die kleine Variante ab ("state-panel small"), die der
 // Kader-Ausschnitt auf der Team-Seite benutzt.
-function statePanel(icon, text, detail, klasse = 'state-panel') {
+export function statePanel(icon, text, detail, klasse = 'state-panel') {
     const extra = detail ? `<p>${escapeHtml(detail)}</p>` : '';
     return `<div class="${escapeHtml(klasse)}"><i class="${escapeHtml(icon)}"></i><h3>${escapeHtml(text)}</h3>${extra}</div>`;
 }
 
-function loadingPanel(text) {
+export function loadingPanel(text) {
     return statePanel('fas fa-spinner fa-spin', text);
 }
 
-function errorPanel(text, detail) {
+export function errorPanel(text, detail) {
     return statePanel('fas fa-exclamation-triangle', text, detail);
 }
 
 // "Noch nichts da" ist kein Fehler: der Scheduler befüllt gerade. Eigene
 // Funktion, weil der Satz an mehreren Stellen gleich lauten soll - `was`
 // benennt darin die Quelle ("Die Renn-Historie", "Die Fahrer-Datenbank").
-function pendingPanel(text, was) {
+export function pendingPanel(text, was) {
     return statePanel(
         'fas fa-hourglass-half', text,
         `${was} wird gerade im Hintergrund befüllt - schau in ein paar Minuten wieder vorbei.`,
@@ -145,11 +149,32 @@ function initialsFrom(name, separator) {
 }
 
 // Teamnamen: Leerzeichen, Bindestrich und Halbgeviertstrich trennen.
-function teamInitials(name) {
+export function teamInitials(name) {
     return initialsFrom(name, /[\s–-]+/);
 }
 
 // Personennamen: nur Leerzeichen trennen.
-function riderInitials(name) {
+export function riderInitials(name) {
     return initialsFrom(name, /\s+/);
+}
+
+
+// ---------------------------------------------------------------------------
+// Einstiegspunkt einer Seite
+// ---------------------------------------------------------------------------
+// Module werden deferred ausgeführt: sie laufen, wenn das HTML fertig
+// geparst ist, aber BEVOR DOMContentLoaded feuert. Ein
+// addEventListener('DOMContentLoaded', ...) im Modul greift damit noch -
+// aber nur, weil die Reihenfolge zufällig passt. Wer das Modul später per
+// import() nachlädt (oder der Browser die Reihenfolge anders auslegt),
+// bekommt eine Seite, die stumm nichts tut.
+//
+// Diese Funktion prüft stattdessen den Zustand: ist das Dokument schon
+// geparst, wird sofort gestartet, sonst auf DOMContentLoaded gewartet.
+export function starten(einstieg) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', einstieg, { once: true });
+    } else {
+        einstieg();
+    }
 }

@@ -1,7 +1,11 @@
 // ===== STARTSEITE =====
 // Nur die 3 Kacheln (Races/Teams/News) + Gender-Umschalter. Lädt lediglich
 // die Anzahl je Bereich für die kleinen Badges auf den Kacheln.
-document.addEventListener('DOMContentLoaded', async () => {
+import { Api } from './api.js';
+import { isWomen, renderNav } from './nav.js';
+import { starten } from './ui.js';
+
+starten(async () => {
     renderNav();
 
     if (isWomen()) {

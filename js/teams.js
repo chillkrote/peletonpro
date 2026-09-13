@@ -4,7 +4,12 @@
 // bare Fahrerliste aus der Datenbank, siehe js/riders.js). Der Fahrer-Tab
 // wird erst beim ersten Klick geladen, damit ein Seitenaufruf ohne
 // Fahrer-Interesse nicht unnötig ~500 Datensätze lädt.
-document.addEventListener('DOMContentLoaded', async () => {
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { initRidersTab } from './riders.js';
+import { errorPanel, loadingPanel, starten, statePanel, teamInitials } from './ui.js';
+
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer' }] });
 
     const teamsContent = document.getElementById('teams-content');

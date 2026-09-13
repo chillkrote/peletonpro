@@ -5,7 +5,12 @@
 // Darstellung (Initialen, Geburtsdatum, Strava-Link, Team-Badge) überall
 // gleich aussieht.
 
-function formatBirthDate(dateStr) {
+import { Api, escapeHtml, safeUrl } from './api.js';
+import {
+    errorPanel, formatCalendarDate, loadingPanel, pendingPanel, riderInitials, statePanel,
+} from './ui.js';
+
+export function formatBirthDate(dateStr) {
     return formatCalendarDate(dateStr) || null;
 }
 
@@ -112,7 +117,7 @@ async function loadAllRiders() {
     return { riders, error: null };
 }
 
-async function initRidersTab(container) {
+export async function initRidersTab(container) {
     container.innerHTML = loadingPanel('Lade Fahrer…');
     try {
         const [ridersRes, teamsRes] = await Promise.all([loadAllRiders(), Api.getTeams()]);
@@ -132,7 +137,7 @@ async function initRidersTab(container) {
     }
 }
 
-async function renderTeamRoster(container, teamId) {
+export async function renderTeamRoster(container, teamId) {
     container.innerHTML = statePanel('fas fa-spinner fa-spin', 'Lade Kader…', null, 'state-panel small');
     try {
         const { riders, error } = await Api.getRiders(teamId);

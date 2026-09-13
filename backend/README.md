@@ -425,6 +425,19 @@ uvicorn app.main:app --reload --port 8001
 API läuft dann unter `http://localhost:8001`, z.B.
 `http://localhost:8001/api/teams`.
 
+Das Frontend braucht einen HTTP-Server - per Doppelklick aus dem
+Dateimanager geöffnet bleiben die Seiten leer, weil ES-Module von `file://`
+nicht laden (siehe "Frontend: ES-Module statt globaler Namen"):
+
+```bash
+cd ..                 # Wurzelverzeichnis, wo die HTML-Dateien liegen
+python3 -m http.server 8000
+```
+
+Dann `http://localhost:8000/index.html` öffnen. `js/api.js` erkennt
+`localhost` bzw. `127.0.0.1` am Hostnamen und spricht automatisch
+`http://localhost:8001` an.
+
 ## Deployment auf Render.com
 
 1. Repo mit Render verbinden, `backend/render.yaml` wird automatisch
@@ -795,7 +808,9 @@ Dabei aufgefallen und mit behoben: beim Umbau von `js/team.js` auf
 `/api/teams/{id}/stats` waren dessen lokale Kopien von `errorPanel` und
 `initials` entfallen, ohne ersetzt zu werden - und `team.html` lädt kein
 Skript, das sie mitbrachte. Die Team-Detailseite lief damit in einen
-`ReferenceError`.
+`ReferenceError`. Dass so etwas überhaupt unbemerkt passieren kann, liegt am
+globalen Namensraum - dagegen siehe "Frontend: ES-Module statt globaler
+Namen".
 
 `js/team.js` holt das Team jetzt über `GET /api/teams/{id}` statt die
 komplette Team-Liste zu laden und darin mit `find()` zu suchen. Damit das
@@ -1029,6 +1044,142 @@ byteweise verglichen.
 Optionaler Zugriffsschutz: ist `EXPORT_TOKEN` gesetzt, verlangen alle
 Export-Routen `Authorization: Bearer <token>` (Vergleich per
 `secrets.compare_digest`). Ohne die Variable bleiben sie offen wie bisher.
+
+## Frontend: ES-Module statt globaler Namen
+
+Die sechs Seiten laden ihr JavaScript jetzt als ES-Modul - ein Tag pro
+Seite, alles andere zieht das Modul per `import` selbst:
+
+```html
+<script type="module" src="js/teams.js"></script>
+```
+
+Vorher lud jede Seite vier bis fünf klassische `<script src>`-Tags, und die
+Abhängigkeiten dazwischen liefen über globale Namen, ohne dass sie irgendwo
+deklariert waren:
+
+- `js/riders.js` braucht `escapeHtml`/`safeUrl` aus `js/api.js`
+- `js/team.js` braucht `renderTeamRoster` aus `js/riders.js`
+- `js/teams.js` braucht `initRidersTab` aus `js/riders.js`
+- alle Seiten brauchen `renderNav` aus `js/nav.js`
+
+Die einzige Absicherung war die Reihenfolge der Tags in sechs HTML-Dateien.
+Was dabei schiefgeht, ist belegt: `initials` existierte zweimal, in
+`js/teams.js` und `js/team.js`. Dass die eine Definition die andere nie
+überschrieben hat, lag allein daran, dass die beiden Dateien nie auf
+derselben Seite liegen. Und als `js/team.js` seine Kopien verlor, lief die
+Team-Detailseite in einen `ReferenceError` - ohne dass irgendeine Prüfung
+das gemerkt hätte, weil die Syntax ja in Ordnung war.
+
+Mit Modulen ist jede Abhängigkeit deklariert, und ein falscher Name ist ein
+harter Fehler beim Verlinken statt eines stillen `undefined`. Der Graph:
+
+```
+api.js  (keine Abhängigkeiten)
+  ui.js
+    nav.js
+    riders.js
+      home.js  news.js  races.js  rider.js  team.js  teams.js
+```
+
+Exportiert wird nur, was eine andere Datei braucht: `apiGet` und `API_BASE`
+bleiben in `api.js`, `parseCalendarDate` und `initialsFrom` in `ui.js`.
+
+### Drei Stolperstellen, die dabei geprüft wurden
+
+**Einstiegspunkt.** Module werden deferred ausgeführt: sie laufen, wenn das
+HTML geparst ist, aber bevor `DOMContentLoaded` feuert. Ein
+`addEventListener('DOMContentLoaded', ...)` im Modul greift damit noch - aber
+nur, weil die Reihenfolge zufällig passt. Wer das Modul später per
+`import()` nachlädt, bekommt eine Seite, die stumm nichts tut. Die sechs
+Seiten-Module benutzen deshalb `ui.starten()`, das den Zustand prüft
+(`document.readyState`) statt auf ein Ereignis zu hoffen, das vielleicht
+schon durch ist.
+
+**Inline-Handler.** Inline-Attribute können keine Modul-Bindings sehen. Im
+Baum gibt es vier, alle geprüft:
+
+| Stelle | Handler | Braucht eine Modul-Funktion? |
+|---|---|---|
+| `js/riders.js` (2x) | `onclick="event.stopPropagation()"` | nein |
+| `js/teams.js`, `js/team.js` | `onerror="this.parentElement.textContent='XY'"` | nein - die Initialen stehen beim Rendern schon als Literal im Attribut |
+
+Alle vier bleiben damit gültig. Käme einer dazu, der doch eine
+Modul-Funktion aufruft, gehört er auf `addEventListener` umgebaut.
+
+**GitHub Pages.** Läuft ohne Build-Schritt: Pages liefert `.js` als
+`text/javascript` (Module brauchen genau das), die Importe sind relativ und
+mit Dateiendung geschrieben (`./api.js`, nicht `./api`), und `.nojekyll`
+liegt im Wurzelverzeichnis, damit `js/` nicht angetastet wird. Kein Bundler,
+kein npm, kein TypeScript.
+
+Was **nicht** mehr geht: die Seiten per Doppelklick aus dem Dateimanager
+öffnen. Module unterliegen CORS und laden von `file://` grundsätzlich nicht -
+man sieht eine leere Seite. Lokal braucht es einen HTTP-Server, siehe
+nächster Abschnitt.
+
+### Seiten im Browser prüfen
+
+`scripts/check-pages.mjs` lädt alle sechs Seiten in Chromium und prüft vier
+Dinge pro Seite: kein JavaScript-Fehler (das fängt fehlgeschlagene Importe
+und `ReferenceError`s), kein fehlgeschlagener Request auf eine eigene Datei,
+die Seite hat wirklich gerendert (ein erwarteter Text muss im sichtbaren
+Text stehen - ohne das besteht auch eine Seite den Test, die stumm nichts
+tut), und kein Helfer hängt mehr am globalen `window`.
+
+```bash
+# Backend
+cd backend && DATABASE_URL=... python3 -m uvicorn app.main:app --port 8001 &
+# Statische Dateien - NICHT per file://, siehe oben
+python3 -m http.server 8000 &
+node scripts/check-pages.mjs
+```
+
+Externe Quellen (Font-Awesome-CDN, Google Fonts, Wikimedia-Logos) übergeht
+der Test: sie sind in abgeschotteten Umgebungen nicht erreichbar und sagen
+nichts über den Code.
+
+Dazu zwei statische Prüfungen ohne Browser:
+
+```bash
+node scripts/check-js-modules.mjs     # ein Modul-Tag pro Seite, jeder import trifft ein export, keine toten Exporte
+python3 scripts/check-env-example.py  # .env.example gegen die im Code gelesenen Variablen
+```
+
+`check-js-modules.mjs` nutzt aus, dass Node einen falschen Import-Namen beim
+**Verlinken** des Modulgraphen meldet - also bevor irgendein Modulrumpf
+läuft. Deshalb funktioniert die Prüfung, obwohl die Module beim Ausführen
+`window` und `document` brauchen.
+
+Gegengeprobt, dass die Prüfungen greifen: ein absichtlich falscher
+Import-Name (`renderTeamRosterXX`) wird von `check-js-modules.mjs` und von
+`check-pages.mjs` gemeldet; ein `<script>`-Tag ohne `type="module"` ebenso.
+`scripts/check-js-helpers.mjs` aus dem vorherigen Schritt ist entfallen - es
+prüfte, ob eine Seite das richtige Skript lädt, und genau das ist mit
+Modulen deklariert.
+
+### `.env.example` gegen den Code
+
+`scripts/check-env-example.py` liest die Umgebungsvariablen per AST aus
+`backend/app/` (`os.environ.get`, `os.getenv`, `os.environ[...]`) und meldet
+drei Dinge:
+
+- **FEHLT** - der Code liest sie, `.env.example` kennt sie nicht. Folge: sie
+  wird beim Deployen vergessen. Genau so lief der Service am 12.09.2026 ohne
+  `DATABASE_URL`: die App startet dann und liefert leere Listen, statt sich
+  zu beschweren (dagegen gibt es inzwischen `REQUIRE_DATABASE`).
+- **ÜBERZÄHLIG** - steht in `.env.example`, wird nirgends gelesen. Folge:
+  jemand setzt sie und wundert sich. Entstand nach dem Abbau des alten
+  Renn-Pfades (`REFRESH_INTERVAL_CALENDAR`, `REFRESH_INTERVAL_RESULTS`).
+- **ABWEICHUNG** - der Beispielwert ist nicht der Code-Default. Vier
+  Variablen weichen absichtlich ab (`CORS_ORIGINS` braucht die
+  GitHub-Pages-Adresse, `BACKUP_KEEP=7` ist ein Vorschlag für den Cron-Job,
+  `CACHE_DIR`/`BACKUP_DIR` sind relative Schreibweisen desselben
+  Verzeichnisses). Die stehen namentlich mit Begründung in
+  `ABSICHTLICH_ANDERS` im Skript - nicht als Kommentar in `.env.example`,
+  weil eine Kommentar-Heuristik jede Abweichung stumm durchgelassen hätte
+  (nachgemessen: ein auf `5/minute` verfälschtes `RATE_LIMIT_DEFAULT` wurde
+  von der Kommentar-Variante nicht gemeldet, von der Liste schon).
 
 ## Backup (`app/backup.py`)
 

@@ -1,4 +1,8 @@
 // ===== API CLIENT =====
+// ES-Modul. Exportiert werden nur escapeHtml, safeUrl und Api. API_BASE,
+// apiError und apiGet bleiben modul-intern: apiGet wird ausschließlich vom
+// Api-Objekt unten benutzt, und ein Aufrufer soll die Pfade nicht selbst
+// zusammenbauen, sondern eine Api-Methode nehmen.
 // Basis-URL des Backends. Lokal (Entwicklung) automatisch localhost:8001,
 // sonst die deployte Render-URL. Bei Bedarf vor dem Laden dieses Skripts
 // überschreiben: <script>window.PELOTONPRO_API_BASE = '...';</script>
@@ -38,7 +42,7 @@ async function apiGet(path) {
 // Kleine Sicherheitshelfer: Daten aus API/Scraping/RSS sind externer
 // Herkunft und werden per innerHTML gerendert - daher immer escapen bzw.
 // Protokoll von URLs validieren, bevor sie in href/src landen.
-function escapeHtml(value) {
+export function escapeHtml(value) {
     if (value === null || value === undefined) return '';
     return String(value)
         .replace(/&/g, '&amp;')
@@ -48,7 +52,7 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function safeUrl(url) {
+export function safeUrl(url) {
     if (!url) return '#';
     try {
         const parsed = new URL(url, window.location.href);
@@ -58,7 +62,7 @@ function safeUrl(url) {
     }
 }
 
-const Api = {
+export const Api = {
     getTeams(category) {
         return apiGet(`/api/teams${category ? `?category=${category}` : ''}`);
     },

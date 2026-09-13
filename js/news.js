@@ -1,10 +1,14 @@
 // ===== NEWS-SEITE =====
 // Erste Meldung groß als Featured-Card, Rest im Karten-Grid. Filter-Chips
 // nach Quelle werden dynamisch aus den geladenen Daten gebaut.
+import { Api, escapeHtml, safeUrl } from './api.js';
+import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { errorPanel, loadingPanel, starten, statePanel } from './ui.js';
+
 let allNews = [];
 let currentSource = 'all';
 
-document.addEventListener('DOMContentLoaded', async () => {
+starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'News' }] });
 
     const content = document.getElementById('news-content');
