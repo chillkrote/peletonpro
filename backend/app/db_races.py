@@ -31,7 +31,7 @@ import logging
 import re
 from typing import Optional
 
-from .db import _connect
+from .db import _connect, stream_query
 from .models import RaceRecord, RaceResultEntry, RaceStage
 
 logger = logging.getLogger(__name__)
@@ -276,37 +276,72 @@ def replace_race_details(
 # ---------------------------------------------------------------------------
 
 
+def _race_filter(
+    season: Optional[int], category: Optional[str], circuit: Optional[str]
+) -> tuple[str, list]:
+    """Baut die WHERE-Klausel für Liste und Zählung. Eine Stelle statt zwei:
+    sonst driften Filter und Gesamtzahl auseinander, sobald eine neue Achse
+    dazukommt (etwa `gender` für den Frauen-Radsport)."""
+    clause = ""
+    params: list = []
+    if season is not None:
+        clause += " AND season = %s"
+        params.append(season)
+    if category:
+        clause += " AND category = %s"
+        params.append(category)
+    if circuit:
+        clause += " AND circuit = %s"
+        params.append(circuit)
+    return clause, params
+
+
 def get_races(
     season: Optional[int] = None,
     category: Optional[str] = None,
     circuit: Optional[str] = None,
-    limit: int = 500,
+    limit: int = 200,
     offset: int = 0,
 ) -> list[RaceRecord]:
     """Leichtgewichtige Liste (ohne results/stages) - für die Detailansicht
     siehe get_race()."""
-    query = """
+    clause, params = _race_filter(season, category, circuit)
+    query = f"""
         SELECT id, name, season, category, circuit, start_date, end_date,
                num_stages, distance_km, elevation_m, wiki_url, organizer_website, results_fetched_at
         FROM races
-        WHERE 1=1
+        WHERE 1=1{clause}
+        ORDER BY start_date NULLS LAST, name LIMIT %s OFFSET %s
     """
-    params: list = []
-    if season is not None:
-        query += " AND season = %s"
-        params.append(season)
-    if category:
-        query += " AND category = %s"
-        params.append(category)
-    if circuit:
-        query += " AND circuit = %s"
-        params.append(circuit)
-    query += " ORDER BY start_date NULLS LAST, name LIMIT %s OFFSET %s"
-    params.extend([limit, offset])
-
     with _connect() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(query, [*params, limit, offset]).fetchall()
     return [_row_to_race(row) for row in rows]
+
+
+def count_races(
+    season: Optional[int] = None,
+    category: Optional[str] = None,
+    circuit: Optional[str] = None,
+) -> int:
+    """Gesamtzahl für dieselben Filter wie get_races - damit das Frontend
+    paginieren kann, ohne alles laden zu müssen."""
+    clause, params = _race_filter(season, category, circuit)
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT count(*) AS n FROM races WHERE 1=1{clause}", params
+        ).fetchone()
+    return row["n"] if row else 0
+
+
+def get_seasons() -> list[int]:
+    """Alle Saisons, für die Rennen vorliegen - absteigend. Leichter Endpunkt
+    für die Saison-Tabs im Frontend, das sie sonst aus der kompletten
+    Renn-Liste ableiten müsste (und die dafür komplett laden)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT season FROM races ORDER BY season DESC"
+        ).fetchall()
+    return [r["season"] for r in rows]
 
 
 def _row_to_race(row: dict) -> RaceRecord:
@@ -424,42 +459,43 @@ def get_races_missing_details_count() -> int:
 # ---------------------------------------------------------------------------
 
 
-def export_races() -> list[dict]:
-    with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT id, name, season, category, circuit, start_date, end_date,
-                   num_stages, distance_km, elevation_m, wiki_url, organizer_website,
-                   results_fetched_at, last_updated
-            FROM races
-            ORDER BY season, category, circuit NULLS FIRST, name
-            """
-        ).fetchall()
+def export_races():
+    return stream_query(
+        """
+        SELECT id, name, season, category, circuit, start_date, end_date,
+               num_stages, distance_km, elevation_m, wiki_url, organizer_website,
+               results_fetched_at, last_updated
+        FROM races
+        ORDER BY season, category, circuit NULLS FIRST, name
+        """
+    )
 
 
-def export_race_results() -> list[dict]:
-    with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
-                   s.stage_number, res.position, res.rider_name, res.team_name, res.time_or_gap
-            FROM race_results res
-            JOIN races r ON r.id = res.race_id
-            LEFT JOIN race_stages s ON s.id = res.stage_id
-            ORDER BY r.season, r.category, r.name, s.stage_number NULLS FIRST, res.position
-            """
-        ).fetchall()
+def export_race_results():
+    """Die mit Abstand größte Export-Tabelle: jede Platzierung über alle
+    Rennen und Etappen. Streamt über einen server-side Cursor (siehe
+    db.stream_query) - mit fetchall() lag das komplette Ergebnis im Speicher
+    der 512-MB-Instanz."""
+    return stream_query(
+        """
+        SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
+               s.stage_number, res.position, res.rider_name, res.team_name, res.time_or_gap
+        FROM race_results res
+        JOIN races r ON r.id = res.race_id
+        LEFT JOIN race_stages s ON s.id = res.stage_id
+        ORDER BY r.season, r.category, r.name, s.stage_number NULLS FIRST, res.position
+        """
+    )
 
 
-def export_race_stages() -> list[dict]:
-    with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
-                   s.stage_number, s.stage_date, s.distance_km, s.elevation_m,
-                   s.start_location, s.end_location
-            FROM race_stages s
-            JOIN races r ON r.id = s.race_id
-            ORDER BY r.season, r.category, r.name, s.stage_number
-            """
-        ).fetchall()
+def export_race_stages():
+    return stream_query(
+        """
+        SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
+               s.stage_number, s.stage_date, s.distance_km, s.elevation_m,
+               s.start_location, s.end_location
+        FROM race_stages s
+        JOIN races r ON r.id = s.race_id
+        ORDER BY r.season, r.category, r.name, s.stage_number
+        """
+    )

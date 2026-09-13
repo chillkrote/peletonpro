@@ -61,7 +61,12 @@ const Api = {
     getRider(id) {
         return apiGet(`/api/riders/${encodeURIComponent(id)}`);
     },
-    getRaceHistory({ season, category, circuit, limit = 3000, offset = 0 } = {}) {
+    getRaceSeasons() {
+        return apiGet('/api/race-history/seasons');
+    },
+    // limit ist serverseitig auf 500 begrenzt (siehe routers/race_history.py).
+    // Deshalb wird pro Saison geladen, nicht alles auf einmal.
+    getRaceHistory({ season, category, circuit, limit = 500, offset = 0 } = {}) {
         const params = new URLSearchParams();
         if (season) params.set('season', season);
         if (category) params.set('category', category);

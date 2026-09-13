@@ -620,6 +620,78 @@ Schedulers (`history_fetched_at IS NULL`, `strava_checked_at IS NULL`) - für
 `races` gab es das Gegenstück schon, hier fehlte es. `EXPLAIN` zeigt jetzt
 einen Index Scan statt Seq Scan plus Sortierung über die ganze Tabelle.
 
+## Sicherheit
+
+### Keine internen Fehlertexte nach außen
+
+Die Router antworteten im Fehlerfall mit `str(exc)`. Bei einem
+psycopg-Verbindungsfehler enthält der Host, Port, Benutzernamen und
+Datenbanknamen - und das Frontend zeigt das `error`-Feld sichtbar an. Jetzt
+gehen ausschließlich feste Texte aus `app/routers/messages.py` nach außen,
+das Detail geht per `logger.exception` ins Log. Dazu ein globaler
+Exception-Handler in `app/main.py` für alles, was kein Router selbst
+behandelt.
+
+Geprüft mit einer absichtlich falschen `DATABASE_URL`
+(`postgresql://geheimuser:geheimpass@127.0.0.1:5599/...`): in keiner Antwort
+von `/api/riders`, `/api/race-history`, `/api/riders/{id}`,
+`/api/race-history/{id}` oder den Export-Routen tauchen Benutzer, Passwort,
+Host, Port, `psycopg` oder ein Traceback auf.
+
+### Begrenzte `limit`/`offset`
+
+`limit` und `offset` gingen ungeprüft in SQL - `?limit=999999999` war damit
+eine kostenlose Anfrage, die die Free-Instanz die volle Tabelle lesen, in
+Pydantic-Modelle gießen und serialisieren ließ; ein negatives `offset`
+erzeugte einen Postgres-Fehler, der über das `error`-Feld nach außen ging.
+
+Jetzt `Query(200, ge=1, le=500)` bzw. `Query(0, ge=0)`, analog für
+`/api/news` und `/api/riders`. Ungültige Werte werden mit 422 abgelehnt. Die
+Antwort nennt zusätzlich `total`, `limit` und `offset`, damit paginiert
+werden kann - `count_races`/`count_riders` teilen sich die WHERE-Klausel mit
+der Listen-Abfrage (`_race_filter`/`_rider_filter`), damit Filter und
+Gesamtzahl nicht auseinanderdriften, sobald eine Achse dazukommt.
+
+Das Frontend lädt `races.html` jetzt **pro Saison** statt alles auf einmal
+(vorher `limit=5000`). Die Saison-Liste kommt vom neuen leichten Endpunkt
+`GET /api/race-history/seasons` - vorher leitete das Frontend sie aus der
+kompletten Renn-Liste ab und musste die dafür laden.
+
+> Die `/seasons`-Route muss im Router **vor** `/{race_id}` stehen, sonst
+> matcht "seasons" als `race_id`.
+
+### CSV-Export streamt wirklich
+
+`StreamingResponse` war Kosmetik: `fetchall()` holte alle Zeilen in eine
+Liste, `io.StringIO` baute daraus das komplette CSV, und
+`iter([buffer.getvalue()])` gab es als einen Block aus - der Bestand lag
+zweimal im Speicher. Jetzt läuft alles über `db.stream_query` (benannter
+server-side Cursor, `EXPORT_ITERSIZE` Zeilen pro Block) und wird blockweise
+als CSV ausgegeben. Spaltennamen kommen aus `cur.description`, nicht aus der
+ersten Zeile - so stimmt der Kopf auch bei leerem Ergebnis.
+
+Gemessen mit 200.000 Zeilen in `race_results` (13,5 MiB CSV):
+
+| | RSS-Zuwachs |
+|---|---|
+| vorher | **186 MiB** |
+| nachher | **30 MiB** |
+
+Auf einer 512-MB-Instanz war das der Weg in den OOM-Killer, und der Zielumfang
+(~2.000 Rennen × Top 10 × Etappen) liegt deutlich über den getesteten 200.000
+Zeilen.
+
+`export_seasons` expandierte die Jahre in Python und ließ sich so nicht
+streamen - das macht jetzt `generate_series` in SQL. Reihenfolge und Inhalt
+sind identisch, **inklusive** der doppelten Jahre bei überlappenden Stints:
+das ist ein eigener Befund (siehe "Bekannte Lücken") und wird hier nicht
+nebenbei mitgeändert. Alle sieben CSV-Ausgaben wurden vor und nach dem Umbau
+byteweise verglichen.
+
+Optionaler Zugriffsschutz: ist `EXPORT_TOKEN` gesetzt, verlangen alle
+Export-Routen `Authorization: Bearer <token>` (Vergleich per
+`secrets.compare_digest`). Ohne die Variable bleiben sie offen wie bisher.
+
 ## Backup (`app/backup.py`)
 
 **Warum das nötig ist:** Die Produktionsdatenbank läuft auf Renders

@@ -13,7 +13,12 @@ const CATEGORY_LABEL = { wt: 'World Tour', proseries: 'ProSeries', continental: 
 const CIRCUIT_LABEL = { africa: 'Africa Tour', asia: 'Asia Tour', europe: 'Europe Tour', america: 'America Tour', oceania: 'Oceania Tour' };
 const GRAND_TOUR_NAMES = new Set(['Tour de France', 'Giro d\'Italia', 'Vuelta a España', 'Vuelta a Espana']);
 
-let ALL_RACES = [];
+// Rennen werden pro Saison geladen und hier zwischengespeichert, statt alle
+// Saisons auf einmal zu holen: die Renn-Historie umfasst schon jetzt ~2.000
+// Rennen und wächst mit jeder weiteren Datenbank. Serverseitig ist limit
+// ohnehin auf 500 begrenzt.
+const racesBySeason = new Map();
+let SEASONS = [];
 let selectedSeason = null;
 let selectedCategory = '';
 const detailCache = new Map();
@@ -26,22 +31,40 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     content.innerHTML = loadingPanel('Lade Rennkalender…');
     try {
-        const res = await Api.getRaceHistory({ limit: 5000 });
+        const res = await Api.getRaceSeasons();
         if (res.error) {
             content.innerHTML = errorPanel('Rennkalender-Datenbank nicht verfügbar.', res.error);
             return;
         }
-        ALL_RACES = res.races || [];
-        if (ALL_RACES.length === 0) {
+        SEASONS = res.seasons || [];
+        if (SEASONS.length === 0) {
             content.innerHTML = `<div class="state-panel"><i class="fas fa-hourglass-half"></i><h3>Noch keine Rennen geladen</h3><p>Die Renn-Historie wird gerade im Hintergrund befüllt - schau in ein paar Minuten wieder vorbei.</p></div>`;
             return;
         }
-        initSeasonsAndCategories();
+        await initSeasonsAndCategories();
     } catch (err) {
         console.error('Fehler beim Laden des Rennkalenders:', err);
         content.innerHTML = errorPanel('Rennkalender konnte nicht geladen werden.');
     }
 });
+
+// Holt eine Saison einmalig und merkt sie sich. Blättert über offset weiter,
+// falls eine Saison die serverseitige Obergrenze überschreitet - die UCI
+// Europe Tour allein bringt 170-200 Rennen pro Saison mit.
+async function loadSeason(season) {
+    if (racesBySeason.has(season)) return racesBySeason.get(season);
+    const races = [];
+    let offset = 0;
+    for (;;) {
+        const res = await Api.getRaceHistory({ season, offset });
+        if (res.error) throw new Error(res.error);
+        races.push(...(res.races || []));
+        offset += res.limit;
+        if (races.length >= res.total || !(res.races || []).length) break;
+    }
+    racesBySeason.set(season, races);
+    return races;
+}
 
 function loadingPanel(text) {
     return `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>${escapeHtml(text)}</h3></div>`;
@@ -94,8 +117,8 @@ function categoryLabel(race) {
 // Saison-Tabs + Kategorie-Filter
 // ---------------------------------------------------------------------- //
 
-function initSeasonsAndCategories() {
-    const seasons = [...new Set(ALL_RACES.map((r) => r.season))].sort((a, b) => b - a);
+async function initSeasonsAndCategories() {
+    const seasons = SEASONS;
     const currentYear = new Date().getFullYear();
     selectedSeason = seasons.includes(currentYear) ? currentYear : seasons[0];
 
@@ -108,7 +131,7 @@ function initSeasonsAndCategories() {
             if (btn.classList.contains('active')) return;
             seasonTabs.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
             selectedSeason = Number(btn.dataset.season);
-            renderCurrentSelection();
+            renderCurrentSelection();  // lädt die Saison bei Bedarf nach
         });
     });
 
@@ -134,9 +157,19 @@ function initSeasonsAndCategories() {
     renderCurrentSelection();
 }
 
-function renderCurrentSelection() {
+async function renderCurrentSelection() {
     const content = document.getElementById('races-content');
-    let races = ALL_RACES.filter((r) => r.season === selectedSeason);
+    if (!racesBySeason.has(selectedSeason)) {
+        content.innerHTML = loadingPanel(`Lade Saison ${selectedSeason}…`);
+    }
+    let races;
+    try {
+        races = await loadSeason(selectedSeason);
+    } catch (err) {
+        console.error('Fehler beim Laden der Saison:', err);
+        content.innerHTML = errorPanel(`Saison ${selectedSeason} konnte nicht geladen werden.`);
+        return;
+    }
     if (selectedCategory) races = races.filter((r) => r.category === selectedCategory);
     renderRaceList(content, races);
 }

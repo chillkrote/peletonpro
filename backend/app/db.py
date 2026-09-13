@@ -18,7 +18,7 @@ import logging
 import os
 import threading
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Sequence
 
 import psycopg
 from psycopg.rows import dict_row
@@ -394,24 +394,41 @@ def _row_to_rider(row: dict) -> Rider:
     )
 
 
-def get_riders(team_id: Optional[str] = None) -> list[Rider]:
-    query = """
-        SELECT r.id, r.name, r.first_name, r.last_name, r.country, r.birth_date,
-               r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url
-        FROM riders r
-        LEFT JOIN teams t ON t.id = r.current_team_id
-    """
-    params: tuple = ()
+def _rider_filter(team_id: Optional[str]) -> tuple[str, list]:
+    """WHERE-Klausel für Liste und Zählung an einer Stelle - siehe
+    db_races._race_filter, gleiche Begründung."""
     if team_id:
-        query += " WHERE r.current_team_id = %s"
-        params = (team_id,)
+        return " WHERE r.current_team_id = %s", [team_id]
+    return "", []
+
+
+def get_riders(
+    team_id: Optional[str] = None, limit: int = 1000, offset: int = 0
+) -> list[Rider]:
+    clause, params = _rider_filter(team_id)
     # Standard-Sortierung nach Nachname (siehe README) - NULLS LAST betrifft
     # nur das kurze Zeitfenster direkt nach dem Schema-Update, bevor der
     # nächste refresh_rosters-Lauf first_name/last_name für alle nachträgt.
-    query += " ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name"
+    query = f"""
+        SELECT r.id, r.name, r.first_name, r.last_name, r.country, r.birth_date,
+               r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url
+        FROM riders r
+        LEFT JOIN teams t ON t.id = r.current_team_id{clause}
+        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
+        LIMIT %s OFFSET %s
+    """
     with _connect() as conn:
-        rows = conn.execute(query, params).fetchall()
+        rows = conn.execute(query, [*params, limit, offset]).fetchall()
     return [_row_to_rider(row) for row in rows]
+
+
+def count_riders(team_id: Optional[str] = None) -> int:
+    clause, params = _rider_filter(team_id)
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT count(*) AS n FROM riders r{clause}", params
+        ).fetchone()
+    return row["n"] if row else 0
 
 
 def get_rider(rider_id: str) -> Optional[Rider]:
@@ -561,85 +578,98 @@ def get_riders_missing_history_count() -> int:
 # ---------------------------------------------------------------------------
 # CSV-Export: liefert die Rohdaten je Tabelle (mit ein paar lesbaren
 # Zusatzspalten aus Joins) für app/routers/export.py. Bewusst getrennt von
-# den obigen Funktionen, die auf die API-Modelle (Rider/RiderStint) zugeschnitten
-# sind - der Export soll die Datenbank 1:1 nachvollziehbar machen.
+# den obigen Funktionen, die auf die API-Modelle (Rider/RiderStint)
+# zugeschnitten sind - der Export soll die Datenbank 1:1 nachvollziehbar
+# machen.
+#
+# Alle Export-Funktionen streamen über einen SERVER-SIDE CURSOR statt
+# fetchall(): die Ergebnistabellen wachsen mit jedem Jahrgang, und ein
+# race_results-Export über alle Rennen lag sonst komplett im Speicher der
+# 512-MB-Instanz (siehe stream_query).
 # ---------------------------------------------------------------------------
 
+EXPORT_ITERSIZE = int(os.environ.get("EXPORT_ITERSIZE", "1000"))
 
-def export_teams() -> list[dict]:
+
+@contextmanager
+def stream_query(query: str, params: Sequence = ()) -> Iterator[tuple[list[str], Iterator[dict]]]:
+    """Liefert (Spaltennamen, Zeilen-Iterator) für eine Abfrage, gelesen über
+    einen benannten (server-side) Cursor.
+
+    Der Cursor hält das Ergebnis in der Datenbank und liefert es in Blöcken
+    von EXPORT_ITERSIZE Zeilen - der Speicherverbrauch bleibt damit flach,
+    unabhängig davon, wie groß das Ergebnis ist. Die Verbindung bleibt bis
+    zum Ende des with-Blocks geliehen, der Aufrufer muss den Iterator also
+    innerhalb des Blocks verbrauchen.
+
+    Spaltennamen kommen aus cur.description, nicht aus der ersten Zeile -
+    so stimmt der CSV-Kopf auch bei einem leeren Ergebnis."""
     with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT id, name, category, country, code, logo, wiki_url, last_updated
-            FROM teams ORDER BY name
-            """
-        ).fetchall()
+        with conn.cursor(name="export") as cur:
+            cur.itersize = EXPORT_ITERSIZE
+            cur.execute(query, params)
+            fields = [d.name for d in cur.description]
+            yield fields, cur
 
 
-def export_riders() -> list[dict]:
-    with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT r.id, r.first_name, r.last_name, r.name, r.country, r.birth_date,
-                   r.wiki_url, r.current_team_id, t.name AS current_team_name,
-                   r.strava_url, r.history_fetched_at, r.last_updated
-            FROM riders r
-            LEFT JOIN teams t ON t.id = r.current_team_id
-            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
-            """
-        ).fetchall()
+def export_teams():
+    return stream_query(
+        """
+        SELECT id, name, category, country, code, logo, wiki_url, last_updated
+        FROM teams ORDER BY name
+        """
+    )
 
 
-def export_stints() -> list[dict]:
-    with _connect() as conn:
-        return conn.execute(
-            """
-            SELECT s.rider_id, r.name AS rider_name, s.team_id, s.team_name,
-                   t.wiki_url AS team_wiki_url, s.start_year, s.end_year
-            FROM rider_team_stints s
-            JOIN riders r ON r.id = s.rider_id
-            LEFT JOIN teams t ON t.id = s.team_id
-            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
-            """
-        ).fetchall()
+def export_riders():
+    return stream_query(
+        """
+        SELECT r.id, r.first_name, r.last_name, r.name, r.country, r.birth_date,
+               r.wiki_url, r.current_team_id, t.name AS current_team_name,
+               r.strava_url, r.history_fetched_at, r.last_updated
+        FROM riders r
+        LEFT JOIN teams t ON t.id = r.current_team_id
+        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
+        """
+    )
 
 
-def export_seasons() -> list[dict]:
-    """Eine Zeile pro Fahrer und Saison (Jahr) bei einem WorldTour-Team -
-    dieselbe Ableitung wie get_rider_seasons, aber für alle Fahrer auf
-    einmal (für den CSV-Export). `uci_points` ist der Platzhalter aus
-    rider_season_points (siehe ensure_season_point_placeholders) - i.d.R.
-    noch NULL, bis ein künftiger Import aus einer anderen UCI-Punkte-
-    Datenbank die Zeilen befüllt (siehe README, Abschnitt "Bekannte
-    Lücke")."""
-    with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT s.rider_id, r.name AS rider_name, s.team_id, t.name AS team_name,
-                   t.wiki_url AS team_wiki_url, s.start_year, s.end_year
-            FROM rider_team_stints s
-            JOIN riders r ON r.id = s.rider_id
-            JOIN teams t ON t.id = s.team_id
-            ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
-            """
-        ).fetchall()
-        points_rows = conn.execute(
-            "SELECT rider_id, year, uci_points FROM rider_season_points"
-        ).fetchall()
-    points_by_key = {(row["rider_id"], row["year"]): row["uci_points"] for row in points_rows}
-    seasons: list[dict] = []
-    for row in rows:
-        end_year = row["end_year"] if row["end_year"] is not None else RACE_SEASON_YEAR
-        for year in range(row["start_year"], end_year + 1):
-            seasons.append(
-                {
-                    "rider_id": row["rider_id"],
-                    "rider_name": row["rider_name"],
-                    "year": year,
-                    "team_id": row["team_id"],
-                    "team_name": row["team_name"],
-                    "team_wiki_url": row["team_wiki_url"],
-                    "uci_points": points_by_key.get((row["rider_id"], year)),
-                }
-            )
-    return seasons
+def export_stints():
+    return stream_query(
+        """
+        SELECT s.rider_id, r.name AS rider_name, s.team_id, s.team_name,
+               t.wiki_url AS team_wiki_url, s.start_year, s.end_year
+        FROM rider_team_stints s
+        JOIN riders r ON r.id = s.rider_id
+        LEFT JOIN teams t ON t.id = s.team_id
+        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year
+        """
+    )
+
+
+def export_seasons():
+    """Eine Zeile pro Fahrer und Saison (Jahr) bei einem WorldTour-Team.
+
+    Die Jahres-Expansion läuft jetzt per generate_series in SQL statt in
+    Python - nur so lässt sich das Ergebnis streamen. Reihenfolge und Inhalt
+    sind bewusst identisch zur früheren Python-Schleife, INKLUSIVE der
+    doppelten Jahre bei überlappenden Stints: das ist ein eigener Befund
+    (siehe README, "Bekannte Lücken") und wird hier nicht nebenbei
+    mitgeändert, damit dieser Umbau rein strukturell bleibt.
+
+    `uci_points` ist der Platzhalter aus rider_season_points (siehe
+    ensure_season_point_placeholders) - i.d.R. noch NULL."""
+    return stream_query(
+        """
+        SELECT s.rider_id, r.name AS rider_name, gs.year, s.team_id,
+               t.name AS team_name, t.wiki_url AS team_wiki_url, p.uci_points
+        FROM rider_team_stints s
+        JOIN riders r ON r.id = s.rider_id
+        JOIN teams t ON t.id = s.team_id
+        CROSS JOIN LATERAL generate_series(s.start_year, COALESCE(s.end_year, %s)) AS gs(year)
+        LEFT JOIN rider_season_points p
+               ON p.rider_id = s.rider_id AND p.year = gs.year
+        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, s.start_year, gs.year
+        """,
+        (RACE_SEASON_YEAR,),
+    )

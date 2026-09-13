@@ -1,12 +1,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import db, db_races
 from .config import CORS_ORIGINS
 from .routers import export, news, race_history, races, results, riders, teams
+from .routers.messages import INTERNAL_ERROR
 from .scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +46,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PelotonPro API", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Fängt alles, was kein Router selbst behandelt, loggt es mit Stacktrace
+    und antwortet mit einem festen Text.
+
+    Ohne diesen Handler liefert Starlette bei einer unbehandelten Exception
+    eine 500 und reicht die Exception an den Server weiter - was je nach
+    Konfiguration im Log oder in der Antwort landet. Hier ist beides
+    festgelegt: Detail ins Log, nach außen nur INTERNAL_ERROR. Ein
+    psycopg-Verbindungsfehler enthält in seinem Text Host, Port, Benutzernamen
+    und Datenbanknamen (siehe app/routers/messages.py)."""
+    logger.exception("Unbehandelter Fehler bei %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": INTERNAL_ERROR})
+
 
 app.add_middleware(
     CORSMiddleware,
