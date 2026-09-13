@@ -33,6 +33,9 @@ RATE_LIMIT_DEFAULT = os.environ.get("RATE_LIMIT_DEFAULT", "120/minute")
 # Detailansicht eines Rennens: mehrere Abfragen pro Aufruf. Wer Rennen
 # aufklappt, schafft realistisch keine 60 pro Minute.
 RATE_LIMIT_RACE_DETAIL = os.environ.get("RATE_LIMIT_RACE_DETAIL", "60/minute")
+# Team-Saison-Statistik: drei Abfragen pro Aufruf, davon zwei Aggregationen
+# über race_results. Dieselbe Größenordnung wie die Renn-Detailansicht.
+RATE_LIMIT_TEAM_STATS = os.environ.get("RATE_LIMIT_TEAM_STATS", "60/minute")
 # CSV-Export: liest ganze Tabellen. Ein Mensch braucht das ein paar Mal am
 # Tag, nicht ein paar Mal pro Minute.
 RATE_LIMIT_EXPORT = os.environ.get("RATE_LIMIT_EXPORT", "10/hour")

@@ -59,12 +59,11 @@ function renderNav({ crumbs = [] } = {}) {
 // Laden der eigentlichen (Männer-)Daten überspringen soll.
 function renderComingSoonIfWomen(container) {
     if (!container || !isWomen()) return false;
-    container.innerHTML = `
-        <div class="state-panel coming-soon">
-            <i class="fas fa-hourglass-half"></i>
-            <h3>Frauen World Tour kommt bald</h3>
-            <p>Teams, Rennkalender und Ergebnisse der UCI Women's World Tour sind noch nicht angebunden. Schau bald wieder vorbei.</p>
-        </div>
-    `;
+    container.innerHTML = statePanel(
+        'fas fa-hourglass-half',
+        'Frauen World Tour kommt bald',
+        "Teams, Rennkalender und Ergebnisse der UCI Women's World Tour sind noch nicht angebunden. Schau bald wieder vorbei.",
+        'state-panel coming-soon',
+    );
     return true;
 }

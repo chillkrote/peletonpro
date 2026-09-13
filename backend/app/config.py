@@ -39,8 +39,6 @@ NEWS_FEEDS = [
 # reichen deutlich größere Intervalle als beim ursprünglich geplanten
 # Live-Scraping (schont außerdem Wikipedias API).
 REFRESH_INTERVAL_TEAMS = int(os.environ.get("REFRESH_INTERVAL_TEAMS", str(24 * 60 * 60)))
-REFRESH_INTERVAL_CALENDAR = int(os.environ.get("REFRESH_INTERVAL_CALENDAR", str(24 * 60 * 60)))
-REFRESH_INTERVAL_RESULTS = int(os.environ.get("REFRESH_INTERVAL_RESULTS", str(60 * 60)))
 REFRESH_INTERVAL_NEWS = int(os.environ.get("REFRESH_INTERVAL_NEWS", str(15 * 60)))
 
 # Fahrer-Kader (scheduler.refresh_rosters): ein Wikipedia-Abruf pro Team.

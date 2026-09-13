@@ -25,7 +25,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import RiderHistory, RiderStint, RosterRider, Team
-from ..text import normalize_dashes
+from ..text import normalize_dashes, slugify
 from .wikipedia import fetch_lead_section, fetch_section, wiki_title_from_url
 
 logger = logging.getLogger(__name__)
@@ -44,15 +44,10 @@ NAME_PARTICLES = {
 }
 
 
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "unknown"
-
-
 def _wiki_url_from_href(href: str) -> str | None:
     """Baut aus einem '/wiki/...'-href die volle URL - ohne De-/Re-Encoding,
     damit sie 1:1 der von Wikipedia gelieferten Schreibweise entspricht
-    (wie auch source_url in wikipedia_teams.py/wikipedia_races.py)."""
+    (wie auch source_url in wikipedia_teams.py)."""
     if not href.startswith("/wiki/"):
         return None
     return f"https://en.wikipedia.org{href}"
@@ -184,7 +179,7 @@ def fetch_rider_history(rider_wiki_title: str) -> RiderHistory:
 
 
 def rider_id_for(name: str) -> str:
-    return _slugify(name)
+    return slugify(name)
 
 
 def split_name(full_name: str) -> tuple[str, str]:

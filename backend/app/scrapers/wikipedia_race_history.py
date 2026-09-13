@@ -42,7 +42,7 @@ from .wikipedia import (
     fetch_section_by_index,
     fetch_sections,
 )
-from .wikipedia_races import MONTHS, _parse_result_row
+from .wikipedia_tables import MONTHS, parse_result_row
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +67,6 @@ STAGE_SECTION_RE = re.compile(r"^stage\s*(\d+)\b", re.IGNORECASE)
 DISTANCE_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s*km")
 STAGE_NUMBER_RE = re.compile(r"^(\d+)")
 
-
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "unknown"
 
 
 def season_page_titles(year: int, category: str, circuit: Optional[str] = None) -> list[str]:
@@ -271,9 +267,9 @@ def _parse_results_table(html: str) -> list[RaceResultEntry]:
         return []
     entries: list[RaceResultEntry] = []
     for row in table.select("tbody tr"):
-        r = _parse_result_row(row)
-        if r is not None:
-            entries.append(RaceResultEntry(position=r.position, rider=r.rider, team=r.team or None, time_or_gap=r.time))
+        entry = parse_result_row(row)
+        if entry is not None:
+            entries.append(entry)
     return entries
 
 

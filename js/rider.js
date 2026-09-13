@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    content.innerHTML = `<div class="state-panel"><i class="fas fa-spinner fa-spin"></i><h3>Lade Fahrer…</h3></div>`;
+    content.innerHTML = loadingPanel('Lade Fahrer…');
     try {
         const [rider, teamsRes] = await Promise.all([
             Api.getRider(riderId),
@@ -31,10 +31,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         content.innerHTML = errorPanel('Dieser Fahrer wurde nicht gefunden.');
     }
 });
-
-function errorPanel(text) {
-    return `<div class="state-panel"><i class="fas fa-exclamation-triangle"></i><h3>${escapeHtml(text)}</h3></div>`;
-}
 
 function renderRider(container, rider, teams) {
     document.title = `${rider.name} – PelotonPro`;

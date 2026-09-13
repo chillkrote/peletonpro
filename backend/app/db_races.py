@@ -28,11 +28,12 @@ Rennen strukturiert erfasst, bleibt NULL bis ein künftiger Import aus
 einer anderen Quelle die Werte nachträgt (analog zu riders.uci_points).
 """
 import logging
-import re
 from typing import Optional
 
 from .db import _connect, stream_query
 from .models import RaceRecord, RaceResultEntry, RaceStage
+from .race_meta import is_grand_tour
+from .text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +105,6 @@ def init_schema() -> None:
     logger.info("Renn-Historie-Schema geprüft/erstellt.")
 
 
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug or "unknown"
-
-
 def race_id_for(season: int, category: str, name: str, circuit: Optional[str] = None) -> str:
     """Eindeutige ID über alle Kategorien/Jahre hinweg - Saison und Kategorie
     (bei Continental zusätzlich der Circuit) sind Teil der ID, damit
@@ -116,7 +112,7 @@ def race_id_for(season: int, category: str, name: str, circuit: Optional[str] = 
     parts = [str(season), category]
     if circuit:
         parts.append(circuit)
-    parts.append(_slugify(name))
+    parts.append(slugify(name))
     return "-".join(parts)
 
 
@@ -357,6 +353,7 @@ def _row_to_race(row: dict) -> RaceRecord:
         distance_km=float(row["distance_km"]) if row["distance_km"] is not None else None,
         elevation_m=row["elevation_m"],
         wiki_url=row["wiki_url"],
+        is_grand_tour=is_grand_tour(row["name"]),
         organizer_website=row.get("organizer_website"),
         results_fetched_at=row["results_fetched_at"].isoformat() if row.get("results_fetched_at") else None,
     )
@@ -452,6 +449,85 @@ def get_races_missing_details_count() -> int:
             "SELECT count(*) AS n FROM races WHERE results_fetched_at IS NULL AND wiki_url IS NOT NULL"
         ).fetchone()
     return row["n"] if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Team-Statistik pro Saison
+# ---------------------------------------------------------------------------
+#
+# ZUORDNUNG: race_results speichert nur den Team-NAMEN als Freitext, keinen
+# Fremdschlüssel auf teams. Der Vergleich läuft daher über den Anzeigenamen.
+# Beide Seiten stammen aus demselben Parser (dem Link-Text einer
+# Wikipedia-Tabelle), die Schreibweisen können aber abweichen - die
+# WorldTeams-Übersicht nennt ein Team womöglich "UAE Team Emirates XRG",
+# eine Ergebnis-Tabelle "UAE Team Emirates". Wie hoch die Trefferquote in
+# Produktion ist, ließ sich hier nicht messen (kein Zugriff auf die
+# Produktionsdatenbank und die deployte API).
+#
+# Der saubere Weg ist ein team_id in race_results - das ist ein eigener
+# Befund (siehe README, "Bekannte Lücken"). Danach ändert sich hier nur die
+# WHERE-Bedingung, nicht die Struktur: die Aggregation per GROUP BY bleibt.
+#
+# ZÄHLWEISE: gezählt werden PLATZIERUNGEN, nicht Rennen. Die frühere
+# Berechnung im Browser nutzte findIndex und fand damit nur den besten
+# Fahrer eines Teams pro Rennen - "Top-10-Platzierungen" zählte also Rennen
+# mit mindestens einer Top-10-Platzierung, und zwei Podestplätze desselben
+# Teams im selben Rennen ergaben einen.
+
+
+def get_team_season_stats(team_name: str, season: int) -> dict:
+    """Siege, Podestplätze und Top-10-Platzierungen eines Teams in einer
+    Saison, gezählt über alle Ergebniszeilen (Gesamtwertungen UND Etappen).
+
+    `races` nennt zusätzlich die Zahl der Rennen, in denen das Team
+    überhaupt platziert war - das ist die Zahl, die die frühere
+    Browser-Berechnung faelschlich als "Top-10-Platzierungen" auswies."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                count(*) FILTER (WHERE res.position = 1)  AS wins,
+                count(*) FILTER (WHERE res.position <= 3) AS podiums,
+                count(*) FILTER (WHERE res.position <= 10) AS top_ten,
+                count(DISTINCT res.race_id)               AS races
+            FROM race_results res
+            JOIN races r ON r.id = res.race_id
+            WHERE r.season = %s AND res.team_name = %s
+            """,
+            (season, team_name),
+        ).fetchone()
+    return dict(row) if row else {"wins": 0, "podiums": 0, "top_ten": 0, "races": 0}
+
+
+def get_team_season_wins(team_name: str, season: int, limit: int = 50) -> list[dict]:
+    """Die Siege eines Teams in einer Saison, für die Liste unter den
+    Kennzahlen. Etappensiege sind enthalten und über `stage_number`
+    unterscheidbar - bei einem Etappenrennen ist das der Unterschied
+    zwischen einem Etappensieg und dem Gesamtsieg (stage_number IS NULL)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id AS race_id, r.name AS race_name, r.start_date,
+                   s.stage_number, res.rider_name
+            FROM race_results res
+            JOIN races r ON r.id = res.race_id
+            LEFT JOIN race_stages s ON s.id = res.stage_id
+            WHERE r.season = %s AND res.team_name = %s AND res.position = 1
+            ORDER BY r.start_date DESC NULLS LAST, s.stage_number NULLS FIRST
+            LIMIT %s
+            """,
+            (season, team_name, limit),
+        ).fetchall()
+    return [
+        {
+            "race_id": r["race_id"],
+            "race_name": r["race_name"],
+            "start_date": r["start_date"].isoformat() if r["start_date"] else None,
+            "stage_number": r["stage_number"],
+            "rider": r["rider_name"],
+        }
+        for r in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
