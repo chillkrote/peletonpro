@@ -1,9 +1,10 @@
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import db
+from ..gender import GENDER_DEFAULT
 from .messages import DB_UNAVAILABLE, RIDERS_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -21,17 +22,25 @@ DEFAULT_LIMIT = 1000
 @router.get("")
 def list_riders(
     team: Optional[str] = None,
+    gender: Literal["m", "w"] = GENDER_DEFAULT,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
+    """Fahrer und Fahrerinnen, nach Nachname sortiert.
+
+    `gender` hat den Default 'm', damit jeder Aufrufer, der den Parameter
+    nicht kennt, genau das bekommt, was er vorher bekam - der ganze
+    Bestand ist Männer-Radsport (siehe backend/README.md,
+    "Geschlechts-Dimension")."""
     if not db.is_configured():
         return {"riders": [], "total": 0, "limit": limit, "offset": offset,
-                "error": RIDERS_NOT_CONFIGURED}
+                "gender": gender, "error": RIDERS_NOT_CONFIGURED}
     try:
-        riders = db.get_riders(team_id=team, limit=limit, offset=offset)
+        riders = db.get_riders(team_id=team, limit=limit, offset=offset, gender=gender)
         return {
             "riders": [r.model_dump() for r in riders],
-            "total": db.count_riders(team_id=team),
+            "total": db.count_riders(team_id=team, gender=gender),
+            "gender": gender,
             "limit": limit,
             "offset": offset,
             "error": None,

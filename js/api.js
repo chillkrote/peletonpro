@@ -62,9 +62,24 @@ export function safeUrl(url) {
     }
 }
 
+export // Jeder Listen-Aufruf reicht `gender` durch. Den Wert liefert
+// nav.apiGender() aus dem Umschalter-Zustand; er wird hier NICHT selbst
+// gelesen, damit api.js nicht von nav.js abhängt (die Abhängigkeit läuft
+// heute in die andere Richtung, und ein Zyklus wäre die Folge).
+//
+// `gender` ist überall optional: wer ihn weglässt, bekommt vom Backend den
+// Default 'm' - also genau das, was es vor der Geschlechts-Dimension gab.
+function withGender(params, gender) {
+    if (gender) params.set('gender', gender);
+    return params;
+}
+
 export const Api = {
-    getTeams(category) {
-        return apiGet(`/api/teams${category ? `?category=${category}` : ''}`);
+    getTeams(category, gender) {
+        const params = withGender(new URLSearchParams(), gender);
+        if (category) params.set('category', category);
+        const query = params.toString();
+        return apiGet(`/api/teams${query ? `?${query}` : ''}`);
     },
     getTeam(id) {
         return apiGet(`/api/teams/${encodeURIComponent(id)}`);
@@ -79,8 +94,8 @@ export const Api = {
     // `limit`/`offset` reichen an die Paginierung des Backends durch. Wer nur
     // die Gesamtzahl braucht, holt eine Zeile (limit=1) und liest `total` -
     // siehe js/home.js.
-    getRiders(team, { limit, offset } = {}) {
-        const params = new URLSearchParams();
+    getRiders(team, { limit, offset, gender } = {}) {
+        const params = withGender(new URLSearchParams(), gender);
         if (team) params.set('team', team);
         if (limit !== undefined) params.set('limit', limit);
         if (offset !== undefined) params.set('offset', offset);
@@ -90,13 +105,14 @@ export const Api = {
     getRider(id) {
         return apiGet(`/api/riders/${encodeURIComponent(id)}`);
     },
-    getRaceSeasons() {
-        return apiGet('/api/race-history/seasons');
+    getRaceSeasons(gender) {
+        const query = withGender(new URLSearchParams(), gender).toString();
+        return apiGet(`/api/race-history/seasons${query ? `?${query}` : ''}`);
     },
     // limit ist serverseitig auf 500 begrenzt (siehe routers/race_history.py).
     // Deshalb wird pro Saison geladen, nicht alles auf einmal.
-    getRaceHistory({ season, category, circuit, limit = 500, offset = 0 } = {}) {
-        const params = new URLSearchParams();
+    getRaceHistory({ season, category, circuit, gender, limit = 500, offset = 0 } = {}) {
+        const params = withGender(new URLSearchParams(), gender);
         if (season) params.set('season', season);
         if (category) params.set('category', category);
         if (circuit) params.set('circuit', circuit);

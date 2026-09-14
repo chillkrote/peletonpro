@@ -6,6 +6,7 @@
 // gleich aussieht.
 
 import { Api, escapeHtml, safeUrl } from './api.js';
+import { apiGender } from './nav.js';
 import {
     errorPanel, formatCalendarDate, loadingPanel, pendingPanel, riderInitials, statePanel,
 } from './ui.js';
@@ -108,7 +109,7 @@ async function loadAllRiders() {
     const riders = [];
     let offset = 0;
     for (;;) {
-        const res = await Api.getRiders(null, { offset });
+        const res = await Api.getRiders(null, { offset, gender: apiGender() });
         if (res.error) return { riders, error: res.error };
         riders.push(...(res.riders || []));
         offset += res.limit;
@@ -120,7 +121,9 @@ async function loadAllRiders() {
 export async function initRidersTab(container) {
     container.innerHTML = loadingPanel('Lade Fahrer…');
     try {
-        const [ridersRes, teamsRes] = await Promise.all([loadAllRiders(), Api.getTeams()]);
+        const [ridersRes, teamsRes] = await Promise.all([
+            loadAllRiders(), Api.getTeams(null, apiGender()),
+        ]);
         if (ridersRes.error) {
             container.innerHTML = statePanel('fas fa-database', 'Fahrer-Datenbank nicht verfügbar', ridersRes.error);
             return;
@@ -140,7 +143,7 @@ export async function initRidersTab(container) {
 export async function renderTeamRoster(container, teamId) {
     container.innerHTML = statePanel('fas fa-spinner fa-spin', 'Lade Kader…', null, 'state-panel small');
     try {
-        const { riders, error } = await Api.getRiders(teamId);
+        const { riders, error } = await Api.getRiders(teamId, { gender: apiGender() });
         if (error) {
             container.innerHTML = `<p class="roster-empty">Fahrer-Datenbank nicht verfügbar.</p>`;
             return;

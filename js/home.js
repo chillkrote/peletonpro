@@ -2,7 +2,7 @@
 // Nur die 3 Kacheln (Races/Teams/News) + Gender-Umschalter. Lädt lediglich
 // die Anzahl je Bereich für die kleinen Badges auf den Kacheln.
 import { Api } from './api.js';
-import { isWomen, renderNav } from './nav.js';
+import { apiGender, isWomen, renderNav } from './nav.js';
 import { starten } from './ui.js';
 
 starten(async () => {
@@ -17,18 +17,18 @@ starten(async () => {
 
     try {
         const [teamsRes, racesRes, newsRes, ridersRes] = await Promise.all([
-            Api.getTeams(),
+            Api.getTeams(null, apiGender()),
             // Nur die Gesamtzahl, nicht die Rennen selbst: limit=1 holt eine
             // Zeile, `total` nennt den vollen Bestand (siehe
             // routers/race_history.py).
-            Api.getRaceHistory({ limit: 1 }).catch(() => null),
+            Api.getRaceHistory({ limit: 1, gender: apiGender() }).catch(() => null),
             Api.getNews(1),
             // Ebenso nur die Zahl. Vorher holte die Startseite alle ~500
             // Fahrer, um sie zu zählen - mit dem Frauen-Radsport wären das
             // ein paar Tausend, für eine Zahl in einer Kachel.
             // Fahrer-DB kann fehlen (kein DATABASE_URL) - dann bleibt die
             // Kachel bei der Teams-Zahl.
-            Api.getRiders(null, { limit: 1 }).catch(() => null),
+            Api.getRiders(null, { limit: 1, gender: apiGender() }).catch(() => null),
         ]);
         const teamCount = (teamsRes.teams || []).length;
         const riderCount = ridersRes && !ridersRes.error ? ridersRes.total : null;

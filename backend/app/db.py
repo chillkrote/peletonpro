@@ -25,6 +25,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .config import RACE_SEASON_YEAR
+from .gender import GENDER_DEFAULT
 from .models import Rider, RiderSeason, RiderStint, Team
 
 logger = logging.getLogger(__name__)
@@ -106,8 +107,8 @@ def _connect() -> Iterator[psycopg.Connection]:
 
 
 _UPSERT_TEAM_SQL = """
-    INSERT INTO teams (id, name, category, country, code, logo, wiki_url, last_updated)
-    VALUES (%(id)s, %(name)s, %(category)s, %(country)s, %(code)s, %(logo)s, %(wiki_url)s, now())
+    INSERT INTO teams (id, name, category, country, code, logo, wiki_url, gender, last_updated)
+    VALUES (%(id)s, %(name)s, %(category)s, %(country)s, %(code)s, %(logo)s, %(wiki_url)s, %(gender)s, now())
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         category = EXCLUDED.category,
@@ -115,6 +116,7 @@ _UPSERT_TEAM_SQL = """
         code = EXCLUDED.code,
         logo = EXCLUDED.logo,
         wiki_url = EXCLUDED.wiki_url,
+        gender = EXCLUDED.gender,
         last_updated = now()
 """
 
@@ -128,6 +130,7 @@ def _team_params(team: Team) -> dict:
         "code": team.code,
         "logo": team.logo,
         "wiki_url": team.source_url,
+        "gender": team.gender,
     }
 
 
@@ -149,8 +152,8 @@ def upsert_team(team: Team) -> None:
 
 
 _UPSERT_RIDER_SQL = """
-    INSERT INTO riders (id, name, first_name, last_name, country, birth_date, wiki_url, current_team_id, last_updated)
-    VALUES (%(id)s, %(name)s, %(first_name)s, %(last_name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, now())
+    INSERT INTO riders (id, name, first_name, last_name, country, birth_date, wiki_url, current_team_id, gender, last_updated)
+    VALUES (%(id)s, %(name)s, %(first_name)s, %(last_name)s, %(country)s, %(birth_date)s, %(wiki_url)s, %(current_team_id)s, %(gender)s, now())
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         first_name = EXCLUDED.first_name,
@@ -159,12 +162,13 @@ _UPSERT_RIDER_SQL = """
         birth_date = COALESCE(EXCLUDED.birth_date, riders.birth_date),
         wiki_url = EXCLUDED.wiki_url,
         current_team_id = EXCLUDED.current_team_id,
+        gender = EXCLUDED.gender,
         last_updated = now()
 """
 
 RIDER_FIELDS = (
     "id", "name", "first_name", "last_name", "country", "birth_date",
-    "wiki_url", "current_team_id",
+    "wiki_url", "current_team_id", "gender",
 )
 
 
@@ -315,27 +319,42 @@ def _row_to_rider(row: dict) -> Rider:
         current_team_id=row["current_team_id"],
         current_team_name=row["current_team_name"],
         strava_url=row["strava_url"],
+        gender=row.get("gender", GENDER_DEFAULT),
     )
 
 
-def _rider_filter(team_id: Optional[str]) -> tuple[str, list]:
+def _rider_filter(
+    team_id: Optional[str], gender: str = GENDER_DEFAULT
+) -> tuple[str, list]:
     """WHERE-Klausel für Liste und Zählung an einer Stelle - siehe
-    db_races._race_filter, gleiche Begründung."""
+    db_races._race_filter, gleiche Begründung.
+
+    `gender` hat einen Default, ist aber nicht als "optional" gedacht: ohne
+    diesen Filter mischt die Liste Männer und Frauen, und das will keine
+    Ansicht. Der Default 'm' sorgt dafür, dass jeder Aufrufer, der von der
+    Dimension nichts weiss, genau das bekommt, was er vorher bekam."""
+    bedingungen = ["r.gender = %s"]
+    params: list = [gender]
     if team_id:
-        return " WHERE r.current_team_id = %s", [team_id]
-    return "", []
+        bedingungen.append("r.current_team_id = %s")
+        params.append(team_id)
+    return " WHERE " + " AND ".join(bedingungen), params
 
 
 def get_riders(
-    team_id: Optional[str] = None, limit: int = 1000, offset: int = 0
+    team_id: Optional[str] = None,
+    limit: int = 1000,
+    offset: int = 0,
+    gender: str = GENDER_DEFAULT,
 ) -> list[Rider]:
-    clause, params = _rider_filter(team_id)
+    clause, params = _rider_filter(team_id, gender)
     # Standard-Sortierung nach Nachname (siehe README) - NULLS LAST betrifft
     # nur das kurze Zeitfenster direkt nach dem Schema-Update, bevor der
     # nächste refresh_rosters-Lauf first_name/last_name für alle nachträgt.
     query = f"""
         SELECT r.id, r.name, r.first_name, r.last_name, r.country, r.birth_date,
-               r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url
+               r.wiki_url, r.current_team_id, t.name AS current_team_name, r.strava_url,
+               r.gender
         FROM riders r
         LEFT JOIN teams t ON t.id = r.current_team_id{clause}
         ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
@@ -350,7 +369,9 @@ def get_riders(
 # so liest es das Frontend (js/rider.js baut daraus die Zuordnung
 # Wikipedia-URL -> interne Team-ID). Der Alias steht hier, damit die
 # Umbenennung an einer Stelle liegt und nicht in jedem Router.
-_TEAM_COLUMNS = "id, name, category, country, code, logo, wiki_url AS source_url"
+_TEAM_COLUMNS = (
+    "id, name, category, country, code, logo, wiki_url AS source_url, gender"
+)
 
 
 def get_team(team_id: str) -> Optional[dict]:
@@ -361,7 +382,9 @@ def get_team(team_id: str) -> Optional[dict]:
         ).fetchone()
 
 
-def get_teams(category: Optional[str] = None) -> list[dict]:
+def get_teams(
+    category: Optional[str] = None, gender: str = GENDER_DEFAULT
+) -> list[dict]:
     """Alle Teams, nach Namen sortiert.
 
     Die Liste kam vorher aus app/cache.py, also aus einer JSON-Datei neben
@@ -376,11 +399,12 @@ def get_teams(category: Optional[str] = None) -> list[dict]:
     für weitere Teams (Frauen-WorldTeams, ProTeams) trägt: die Tabelle hat
     ein category-Feld und kann wachsen, eine JSON-Datei pro Abruf nicht.
     """
-    clause = ""
-    params: list = []
+    bedingungen = ["gender = %s"]
+    params: list = [gender]
     if category:
-        clause = " WHERE category = %s"
+        bedingungen.append("category = %s")
         params.append(category)
+    clause = " WHERE " + " AND ".join(bedingungen)
     with _connect() as conn:
         return conn.execute(
             f"SELECT {_TEAM_COLUMNS} FROM teams{clause} ORDER BY name", params
@@ -396,8 +420,8 @@ def teams_last_updated() -> Optional[str]:
     return ts.isoformat() if ts is not None else None
 
 
-def count_riders(team_id: Optional[str] = None) -> int:
-    clause, params = _rider_filter(team_id)
+def count_riders(team_id: Optional[str] = None, gender: str = GENDER_DEFAULT) -> int:
+    clause, params = _rider_filter(team_id, gender)
     with _connect() as conn:
         row = conn.execute(
             f"SELECT count(*) AS n FROM riders r{clause}", params
@@ -605,8 +629,8 @@ def stream_query(query: str, params: Sequence = ()) -> Iterator[tuple[list[str],
 def export_teams():
     return stream_query(
         """
-        SELECT id, name, category, country, code, logo, wiki_url, last_updated
-        FROM teams ORDER BY name
+        SELECT id, name, category, country, code, logo, wiki_url, gender, last_updated
+        FROM teams ORDER BY gender, name
         """
     )
 
@@ -615,11 +639,12 @@ def export_riders():
     return stream_query(
         """
         SELECT r.id, r.first_name, r.last_name, r.name, r.country, r.birth_date,
-               r.wiki_url, r.current_team_id, t.name AS current_team_name,
+               r.gender, r.wikidata_qid, r.wiki_url, r.current_team_id,
+               t.name AS current_team_name,
                r.strava_url, r.history_fetched_at, r.last_updated
         FROM riders r
         LEFT JOIN teams t ON t.id = r.current_team_id
-        ORDER BY r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
+        ORDER BY r.gender, r.last_name NULLS LAST, r.first_name NULLS LAST, r.name
         """
     )
 

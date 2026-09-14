@@ -41,10 +41,30 @@ zaehle() {
     ||' etappen='||(SELECT count(*) FROM race_stages)
     ||' ergebnisse='||(SELECT count(*) FROM race_results)"
 }
+# Spaltenliste je Tabelle, wie sie VOR dem Migrieren aussieht. Wird als
+# Datei festgehalten und nachher wiederverwendet.
+#
+# Der Grund: eine Migration darf Spalten HINZUFUEGEN (0002 tut das mit
+# gender). Eine Pruefsumme ueber die ganze Zeile (x::text) aendert sich
+# dadurch zwangsläufig und meldet einen Fehler, wo keiner ist. Gemeint ist
+# aber: keine Zeile verloren, kein BESTEHENDER Wert veraendert. Also wird
+# nur ueber die Spalten geprueft, die es vorher schon gab - und die Liste
+# kommt aus dem Katalog, damit sie sich nicht mit jeder Migration von Hand
+# nachziehen laesst.
+spalten_merken() {
+  psql -tA -d "$1" -c "
+    SELECT table_name||':'||string_agg(column_name, ',' ORDER BY ordinal_position)
+    FROM information_schema.columns
+    WHERE table_schema='public' AND table_name <> 'schema_migrations'
+    GROUP BY table_name ORDER BY table_name"
+}
 daten_md5() {
-  for t in teams riders rider_team_stints races race_stages race_results; do
-    psql -tA -d "$1" -c "SELECT md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),''))  FROM $t x"
-  done
+  local db=$1 spalten=$2
+  while IFS= read -r spec; do
+    [ -n "$spec" ] || continue
+    local t=${spec%%:*} cols=${spec#*:}
+    echo "$t $(psql -tA -d "$db" -c "SELECT md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),'')) FROM (SELECT $cols FROM $t) x")"
+  done <<< "$spalten"
 }
 schema_abbild() {
   psql -tA -d "$1" -c "
@@ -81,15 +101,13 @@ pruefe "keine Dubletten in schema_migrations" \
 
 echo "=== 3. Produktionsstand migrieren, ohne Daten anzufassen ==="
 neu mig_prod
-# Schema, wie es vor den Migrationen in Produktion lief - aus origin/main
-python3 - <<'PY' > /tmp/prod_schema.sql
-import re, subprocess
-for datei, name in (("backend/app/db.py","SCHEMA"), ("backend/app/db_races.py","SCHEMA_RACES")):
-    quelle = subprocess.run(["git","show",f"origin/main:{datei}"], capture_output=True, text=True).stdout
-    treffer = re.search(rf'{name} = """\n(.*?)\n"""', quelle, re.S)
-    if treffer:
-        print(treffer.group(1))
-PY
+# Der Stand, den Produktion vor den Migrationen hatte. Das ist inzwischen
+# 0001_bestand.sql aus origin/main und nicht mehr die SCHEMA-String-Literale
+# in db.py/db_races.py - die hat genau diese Migration entfernt. Als das
+# Skript noch die Strings suchte, fand es nach dem Merge nichts mehr und
+# Schritt 3 wurde stillschweigend uebersprungen; die UEBERSPRUNGEN-Meldung
+# unten hat das sichtbar gemacht.
+git show origin/main:backend/migrations/0001_bestand.sql > /tmp/prod_schema.sql 2>/dev/null
 if [ -s /tmp/prod_schema.sql ]; then
   psql -q -d mig_prod -f /tmp/prod_schema.sql >/dev/null 2>&1
   psql -q -d mig_prod -f /dev/stdin >/dev/null <<'SQL'
@@ -126,7 +144,9 @@ INSERT INTO race_results (race_id,stage_id,position,rider_name,team_name,time_or
  ('2026-wt-milan-san-remo',NULL,1,'Mathieu van der Poel','Alpecin–Deceuninck','6h 30'' 00"');
 INSERT INTO race_history_seed_log (category,circuit,season,race_count) VALUES ('wt','',2026,2);
 SQL
-  vorher=$(zaehle mig_prod); vorher_md5=$(daten_md5 mig_prod)
+  vorher=$(zaehle mig_prod)
+  spalten_vorher=$(spalten_merken mig_prod)
+  vorher_md5=$(daten_md5 mig_prod "$spalten_vorher")
   # Ein leeres Seeding wuerde alle Vergleiche unten trivial bestehen lassen.
   if echo "$vorher" | grep -q 'teams=0'; then
     meld "Testdaten eingespielt" "FEHLER: keine Zeilen - Vergleiche waeren wertlos"
@@ -135,16 +155,23 @@ SQL
     meld "Testdaten eingespielt" "ok"
   fi
   runner "$BASIS/mig_prod" upgrade >/dev/null
-  nachher=$(zaehle mig_prod); nachher_md5=$(daten_md5 mig_prod)
+  nachher=$(zaehle mig_prod)
+  nachher_md5=$(daten_md5 mig_prod "$spalten_vorher")
   pruefe "Zeilenzahlen unveraendert" "$vorher" "$nachher"
-  pruefe "Daten-Pruefsummen unveraendert" "$vorher_md5" "$nachher_md5"
+  if [ "$vorher_md5" = "$nachher_md5" ]; then
+    meld "kein bestehender Spaltenwert veraendert" "ok"
+  else
+    meld "Spaltenvergleich" "FEHLER:"; diff <(echo "$vorher_md5") <(echo "$nachher_md5")
+    fehler=$((fehler+1))
+  fi
   echo "    vorher:  $vorher"
 
   echo "=== 4. 0001 erzeugt genau den Produktionsstand ==="
   pruefe "Schema (Spalten/Indizes/Constraints) identisch" \
     "$(schema_abbild mig_leer | md5sum)" "$(schema_abbild mig_prod | md5sum)"
 else
-  meld "Produktionsstand aus origin/main lesbar" "UEBERSPRUNGEN (git show fehlgeschlagen)"
+  meld "Produktionsstand aus origin/main lesbar" "FEHLER: 0001_bestand.sql nicht abrufbar"
+  fehler=$((fehler+1))
 fi
 
 echo "=== 5. Geaenderte, schon angewendete Migration bricht ab ==="

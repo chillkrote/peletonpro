@@ -10,6 +10,10 @@ class Team(BaseModel):
     category: Literal["wt", "pro", "cont"]
     country: str
     code: str
+    gender: Literal["m", "w"] = "m"
+    """Männer- oder Frauen-Team. Default 'm': alles Gespeicherte ist
+    Männer-Radsport, die Scraper lesen nur Männer-Quellen (siehe
+    backend/README.md, "Geschlechts-Dimension")."""
     logo: Optional[str] = None
     source_url: Optional[str] = None
     # Hier standen zusätzlich riders, wins_season und website. Alle drei
@@ -64,6 +68,8 @@ class Rider(BaseModel):
     current_team_id: Optional[str] = None
     current_team_name: Optional[str] = None
     strava_url: Optional[str] = None
+    gender: Literal["m", "w"] = "m"
+    """Siehe Team.gender."""
 
 
 class RiderSeason(BaseModel):
@@ -141,6 +147,8 @@ class RaceRecord(BaseModel):
     backend/README.md, Abschnitt "Bekannte Lücke") - bleibt NULL, bis ein
     künftiger Import aus einer anderen Quelle die Werte nachträgt."""
     wiki_url: Optional[str] = None
+    gender: Literal["m", "w"] = "m"
+    """Siehe Team.gender."""
     is_grand_tour: bool = False
     """Ob das Rennen eine Grand Tour ist. Nicht gescraped und keine
     Tabellenspalte, sondern beim Lesen aus dem Namen bestimmt - siehe

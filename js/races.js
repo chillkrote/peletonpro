@@ -10,7 +10,7 @@
 // einer Saison vorab - bei teils 200+ Rennen/Saison wäre das zu viel auf
 // einmal.
 import { Api, escapeHtml, safeUrl } from './api.js';
-import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { apiGender, renderComingSoonIfWomen, renderNav } from './nav.js';
 import {
     errorPanel, formatCalendarDate, loadingPanel, pendingPanel, starten, statePanel,
     todayCalendarIso,
@@ -33,11 +33,17 @@ starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Races' }] });
 
     const content = document.getElementById('races-content');
-    if (renderComingSoonIfWomen(content)) return;
+    // Der Platzhalter entscheidet sich an der Antwort: liegen für
+    // "Frauen" Saisons vor, wird gerendert. Ein Aufruf mit limit-loser
+    // Saisonliste ist der billigste Weg, das zu erfahren.
+    if (await renderComingSoonIfWomen(content, async () => {
+        const res = await Api.getRaceSeasons(apiGender());
+        return !(res.seasons || []).length;
+    })) return;
 
     content.innerHTML = loadingPanel('Lade Rennkalender…');
     try {
-        const res = await Api.getRaceSeasons();
+        const res = await Api.getRaceSeasons(apiGender());
         if (res.error) {
             content.innerHTML = errorPanel('Rennkalender-Datenbank nicht verfügbar.', res.error);
             return;
@@ -62,7 +68,7 @@ async function loadSeason(season) {
     const races = [];
     let offset = 0;
     for (;;) {
-        const res = await Api.getRaceHistory({ season, offset });
+        const res = await Api.getRaceHistory({ season, offset, gender: apiGender() });
         if (res.error) throw new Error(res.error);
         races.push(...(res.races || []));
         offset += res.limit;
