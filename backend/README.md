@@ -212,11 +212,11 @@ wäre. Aus demselben Grund liegen dort inzwischen auch die Teams, siehe
   abgeleitet. Nachname = letztes Wort plus vorangehende bekannte
   Namenspartikel (`van`, `der`, `von`, `de`, `la`, ... - siehe
   `NAME_PARTICLES`), damit z.B. "Mathieu van der Poel" korrekt als Vorname
-  "Mathieu" / Nachname "van der Poel" gesplittet wird. Kein Wörterbuch
-  aller Sprachen - Einzelfälle mit unüblichen Namensformen können falsch
-  getrennt werden. **Standard-Sortierung ist jetzt nach Nachname**
-  (`ORDER BY last_name, first_name`) statt nach vollem Namen, sowohl in
-  `GET /api/riders` als auch im CSV-Export.
+  "Mathieu" / Nachname "van der Poel" gesplittet wird. **Standard-Sortierung
+  ist nach Nachname** (`ORDER BY last_name, first_name`) statt nach vollem
+  Namen, sowohl in `GET /api/riders` als auch im CSV-Export. Wo die
+  Heuristik falsch liegt und was dagegen getan ist, steht unter
+  "Familiennamen aus Wikidata".
 - **Team-Link pro Saison:** `GET /api/riders/{id}` liefert zusätzlich zu
   `history` (den rohen Zeiträumen aus der Wikipedia-Infobox) ein Feld
   `seasons` - eine Zeile pro Kalenderjahr, das der Fahrer laut Historie bei
@@ -242,6 +242,137 @@ wäre. Aus demselben Grund liegen dort inzwischen auch die Teams, siehe
   pro Fahrer nur einmal (wie bei der Historie), nicht periodisch erneut -
   ein nachträglich angelegtes Strava-Profil wird also nicht automatisch
   nachgetragen.
+
+### Familiennamen aus Wikidata (Befund 16)
+
+`split_name` nimmt das letzte Wort plus vorangehende Partikel. Der
+Standardfall stimmt, die niederländisch/deutschen Partikel-Namen auch.
+Falsch liegt die Heuristik bei **spanischen und portugiesischen
+Doppelnachnamen**:
+
+| voller Name | Heuristik | richtig |
+|---|---|---|
+| Juan Ayuso Pesquera | "Juan Ayuso" / **"Pesquera"** | "Juan" / **"Ayuso Pesquera"** |
+| Carlos Rodríguez Cano | "Carlos Rodríguez" / **"Cano"** | "Carlos" / **"Rodríguez Cano"** |
+
+Das ist keine Kosmetik: die Standardsortierung geht über `last_name`, und
+auf der Fahrer-Detailseite ist der Nachname die Überschrift.
+
+Wikidata führt Familiennamen als
+[P734](https://www.wikidata.org/wiki/Property:P734), bei Doppelnachnamen
+als **zwei Aussagen in Reihenfolge**. Damit ist der Fall entscheidbar statt
+geraten - und die Maschinerie dafür stand schon da: derselbe Weg
+Wikipedia-Titel → QID → Property, den der Strava-Abgleich benutzt.
+
+#### Übernommen wird nur, was aufgeht
+
+`nachname_aus_wikidata` akzeptiert einen Wikidata-Familiennamen nur, wenn
+er als **Suffix des vollen Namens auf Wortgrenzen** aufgeht. Wikidata
+enthält auch Geburtsnamen, Namen in anderen Schriften und schlicht Fehler;
+keiner davon darf einen Namen in der Datenbank überschreiben. Passt nichts,
+bleibt das Ergebnis von `split_name` stehen.
+
+Verglichen wird ohne diakritische Zeichen und ohne Groß-/Kleinschreibung
+("Pogacar" gegen "Pogačar", "Kung" gegen "Küng") - **gespeichert** wird
+dagegen immer die Schreibweise aus dem vollen Namen. Die Datenbank soll
+`name == first_name + " " + last_name` erfüllen, und der volle Name ist die
+Quelle mit den richtigen Akzenten.
+
+Vier Schutzregeln, jede davon gegengeprüft (siehe unten):
+
+| Regel | wogegen |
+|---|---|
+| Vergleich auf Wortgrenzen | "gaard" darf nicht auf "Vingegaard" passen |
+| Vergleichsfaltung | "Pogacar" muss auf "Pogačar" passen |
+| längster Kandidat gewinnt | "Pesquera" darf "Ayuso Pesquera" nicht verdrängen |
+| Nachname darf nicht den ganzen Namen einnehmen | sonst bleibt kein Vorname übrig |
+
+#### Migration 0005 schreibt keinen Namen um
+
+Sie legt nur `riders.name_source` an:
+
+| Wert | Bedeutung |
+|---|---|
+| `NULL` | noch nicht bei Wikidata nachgefragt |
+| `heuristik` | nachgefragt, Wikidata hatte nichts Passendes |
+| `wikidata` | Wikidata hat bestätigt oder korrigiert |
+
+Die Spalte ist der Rückweg: ohne sie wäre eine falsche Wikidata-Korrektur
+nicht von einem Heuristik-Ergebnis zu unterscheiden. Ein erneuter Durchlauf
+ist ein `UPDATE riders SET name_source = NULL`. Sie steht auch im
+CSV-Export von `riders` - eine Herkunftsangabe, die man nicht sehen kann,
+nützt nichts, und die CSV-Exporte sind der einzige Weg, von aussen in diese
+Datenbank zu schauen.
+
+Das Nachfragen erledigt `scheduler._namen_abgleichen()`, gebatcht über
+`NAME_BATCH_SIZE` Fahrer pro Lauf, im selben Job wie Historie und Strava,
+einmal pro Fahrer (wie dort).
+
+#### Mitgenommen: `riders.wikidata_qid` wird endlich gefüllt
+
+Die Spalte kam mit Migration 0002 und wurde von **nichts** geschrieben -
+sie war leer. Der Familiennamen-Job löst den Wikipedia-Titel ohnehin zur
+QID auf, also trägt er sie ein. Das ist die Vorarbeit für Befund 7
+Schritt 3 (`riders.id` auf die QID umstellen). Auf der Spalte liegt ein
+partieller UNIQUE-Index; zwei Fahrer auf derselben QID wären ein
+Datenfehler (eine Wikipedia-Weiterleitung, zwei Kaderzeilen für dieselbe
+Person) und werden gemeldet, brechen aber den Lauf nicht ab.
+
+#### Was hier nicht überprüfbar war
+
+**Wikidata ist aus dieser Arbeitsumgebung nicht erreichbar** (HTTP 000,
+Egress-Proxy) - wie Wikipedia. Die **Antwortform** von
+`wbgetentities` für eine Item-Property ist damit ungeprüft: der Code nimmt
+`mainsnak.datavalue.value.id` an.
+
+Dagegen zwei Vorkehrungen statt einer Annahme:
+
+1. `_claim_ziel` liest defensiv und akzeptiert auch eine blanke
+   Zeichenkette.
+2. Jede Aussage ohne lesbare Ziel-ID wird gezählt und als **Warnung**
+   geloggt. Stimmt die Form nicht, steht das im Log - statt dass der
+   Abgleich still bei null bleibt.
+
+Und der Job berichtet, was herauskam:
+
+```
+Familiennamen-Abgleich: <n> Fahrer geprüft, <n> korrigiert, <n> bestätigt,
+<n> ohne Wikidata-Treffer, <n> QIDs nachgetragen
+```
+
+Bleibt "korrigiert" dauerhaft 0, während "geprüft" hochläuft, ist die
+Annahme falsch. Jede Korrektur wird zusätzlich einzeln geloggt, mit dem
+Ergebnis der Heuristik daneben.
+
+Ebenfalls ungeprüft: **wie viele Fahrer im Bestand betroffen sind.** Die
+Datenbank nimmt keine externen Verbindungen an, ich kann die Namen nicht
+abfragen. Bei 517 Fahrern mit spanischen und portugiesischen Namen im Feld
+ist eine zweistellige Zahl plausibel - gemessen ist sie nicht, und das Log
+nach dem Deploy sagt es.
+
+#### Prüfen
+
+```bash
+DATABASE_URL=postgresql://... python3 scripts/check-namen.py
+PGPORT=5599 ./scripts/check-migration-0005.sh
+```
+
+`check-namen.py` prüft drei Dinge. Die **Regel** an 14 Namen, die es
+wirklich gibt, inklusive aller vier Ablehnungsgründe. Den **Parser**, indem
+es HTTP-Antworten in der dokumentierten Form fälscht - und zusätzlich in
+einer abweichenden, um zu belegen, dass die Warnung dann wirklich kommt.
+Und den **Job** gegen eine echte Datenbank: Doppelnachname korrigiert,
+einfacher Name bestätigt, Fahrer ohne Wikidata-Item auf `heuristik`, QID
+nachgetragen, `name` bei allen unverändert, und ein zweiter Lauf fragt
+nicht erneut.
+
+Gefälscht wird auf HTTP-Ebene, nicht auf Funktionsebene: so laufen
+`fetch_wikidata_ids`, `fetch_family_names`, `fetch_labels` und der Parser
+wirklich, statt umgangen zu werden.
+
+Gegengeprüft, dass das Skript etwas taugt: jede der vier Schutzregeln
+einzeln entfernt, jedes Mal schlagen genau die dafür zuständigen
+Prüfungen fehl.
 
 ### Bekannte Lücke: UCI-Ranking-Punkte pro Saison (Platzhalter, Stand 2026-09-12)
 
@@ -300,7 +431,7 @@ für Excel/Pandas, unabhängig von der JSON-API):
 | Endpunkt | Inhalt |
 |---|---|
 | `GET /api/export/teams.csv` | komplette `teams`-Tabelle |
-| `GET /api/export/riders.csv` | `riders` (inkl. `first_name`/`last_name`/`strava_url`) + aufgelöster `current_team_name`, sortiert nach Nachname |
+| `GET /api/export/riders.csv` | `riders` (inkl. `first_name`/`last_name`/`name_source`/`strava_url`/`wikidata_qid`) + aufgelöster `current_team_name`, sortiert nach Nachname |
 | `GET /api/export/stints.csv` | `rider_team_stints` + aufgelöste `rider_name`/`team_wiki_url` (Zeiträume, nicht pro Saison) |
 | `GET /api/export/seasons.csv` | eine Zeile pro Fahrer und Kalenderjahr bei einem WorldTour-Team (aus den Stints abgeleitet, siehe oben) |
 
@@ -712,6 +843,7 @@ Wirkung prüft statt nur den Ablauf:
 PGPORT=5599 ./scripts/check-migration-0002.sh   # Geschlechts-Dimension
 PGPORT=5599 ./scripts/check-migration-0003.sh   # Taxonomie
 PGPORT=5599 ./scripts/check-migration-0004.sh   # Ergebnis-IDs
+PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 ```
 

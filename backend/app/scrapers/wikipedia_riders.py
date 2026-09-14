@@ -21,6 +21,8 @@ temporärer Render-Diagnose-Route geprüft, siehe backend/README.md):
 """
 import logging
 import re
+import unicodedata
+from typing import Optional
 
 from bs4 import BeautifulSoup
 
@@ -213,6 +215,65 @@ def split_name(full_name: str) -> tuple[str, str]:
     first_name = " ".join(parts[:split_index])
     last_name = " ".join(parts[split_index:])
     return first_name, last_name
+
+
+def _vergleichsform(text: str) -> str:
+    """Kleinschreibung ohne diakritische Zeichen - nur zum Vergleichen.
+
+    Wikidata schreibt Familiennamen nicht immer so wie der
+    Wikipedia-Artikeltitel: "Pogacar" gegen "Pogačar", "Kung" gegen "Küng".
+    Ohne diese Faltung würden genau die Namen abgelehnt, um die es geht.
+    NICHT zum Speichern: geschrieben wird immer die Schreibweise aus dem
+    vollen Namen, damit `first_name`/`last_name` zu `name` passen."""
+    zerlegt = unicodedata.normalize("NFKD", text)
+    ohne_zeichen = "".join(z for z in zerlegt if not unicodedata.combining(z))
+    return ohne_zeichen.casefold()
+
+
+def nachname_aus_wikidata(
+    full_name: str, family_labels: list[str]
+) -> Optional[tuple[str, str]]:
+    """(Vorname, Nachname) aus Wikidatas Familiennamen (P734) - oder None.
+
+    WOZU: `split_name` nimmt das letzte Wort plus bekannte Partikel. Bei
+    spanischen und portugiesischen Doppelnachnamen ist das falsch:
+
+        "Juan Ayuso Pesquera"  ->  Vorname "Juan Ayuso" / Nachname "Pesquera"
+
+    Richtig wäre Vorname "Juan" / Nachname "Ayuso Pesquera". Wikidata führt
+    beide Namensteile als eigene P734-Aussagen, in der richtigen Reihenfolge
+    - damit ist der Fall entscheidbar, statt geraten.
+
+    KONSERVATIV, ABSICHTLICH: übernommen wird nur, was als Suffix des vollen
+    Namens auf Wortgrenzen aufgeht. Wikidata enthält auch Geburtsnamen,
+    Namen in anderen Schriften und schlicht Fehler; keine davon darf einen
+    Namen in der Datenbank überschreiben. Passt nichts, gibt die Funktion
+    None zurück und der Aufrufer behält das Ergebnis von `split_name`.
+
+    Zurückgegeben wird die Schreibweise aus `full_name`, nicht die von
+    Wikidata: die Datenbank soll `name == first_name + " " + last_name`
+    erfüllen, und der volle Name ist die Quelle mit den richtigen Akzenten.
+    """
+    worte = full_name.split()
+    if not worte or not family_labels:
+        return None
+
+    # Kandidaten: erst alle Teile zusammen (der Doppelnachname-Fall), dann
+    # die einzelnen. Längster Treffer gewinnt, damit "Ayuso Pesquera" nicht
+    # von "Pesquera" verdrängt wird.
+    kandidaten = [" ".join(family_labels)] + list(family_labels)
+    kandidaten.sort(key=lambda k: len(k.split()), reverse=True)
+
+    for kandidat in kandidaten:
+        teile = kandidat.split()
+        if not teile or len(teile) >= len(worte):
+            # Ein Nachname, der den ganzen Namen einnimmt, lässt keinen
+            # Vornamen übrig - das ist kein Treffer, sondern ein Hinweis,
+            # dass Wikidata etwas anderes meint.
+            continue
+        if _vergleichsform(" ".join(worte[-len(teile):])) == _vergleichsform(kandidat):
+            return " ".join(worte[:-len(teile)]), " ".join(worte[-len(teile):])
+    return None
 
 
 def roster_riders_for_team(team: Team) -> list[tuple[str, RosterRider]]:
