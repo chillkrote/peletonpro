@@ -102,6 +102,19 @@ RACE_HISTORY_RUN_SECONDS = float(os.environ.get("RACE_HISTORY_RUN_SECONDS", "600
 JOB_START_STAGGER_SECONDS = int(os.environ.get("JOB_START_STAGGER_SECONDS", "5"))
 RACE_HISTORY_START_YEAR = int(os.environ.get("RACE_HISTORY_START_YEAR", "2020"))
 RACE_HISTORY_DETAIL_BATCH_SIZE = int(os.environ.get("RACE_HISTORY_DETAIL_BATCH_SIZE", "15"))
+
+# Karenzzeit, bevor die Ergebnisse eines Rennens abgerufen werden: so viele
+# Tage nach dem Enddatum. Vorher wurde jedes Rennen abgerufen, sobald es in
+# der Datenbank stand - auch eines, das erst in drei Monaten stattfindet.
+# Die Wikipedia-Seite existiert dann oft schon (Streckenverlauf, Teilnehmer),
+# eine Ergebnistabelle nicht. Der Abruf lieferte also nichts und markierte
+# das Rennen trotzdem als erledigt, womit es NIE wieder abgefragt wurde.
+#
+# Drei Tage, weil die Ergebnistabellen meist innerhalb eines Tages
+# eingetragen werden und ein Puffer nichts kostet: ein Rennen, das noch
+# wartet, blockiert nichts.
+RACE_DETAIL_GRACE_DAYS = int(os.environ.get("RACE_DETAIL_GRACE_DAYS", "3"))
+
 # Welche Continental-Circuits abgedeckt werden. Die möglichen Werte stehen
 # in app/taxonomy.py (CIRCUITS) - hier steht nur, welche davon der Scheduler
 # abarbeitet. Heute alle; ein Teil davon wäre eine Drosselung, kein neues

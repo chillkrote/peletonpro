@@ -101,11 +101,12 @@ Indizes, aber kein Schutz gegen inhaltliche Umbenennungen.
   (`SCRAPER_REQUEST_DELAY_SECONDS`, Default 2s), auch gegenüber der
   Wikipedia-API.
 - Aggressives Speichern: Teams und Kader werden nur 1x täglich neu
-  geholt, Renn-Details nur einmal pro Rennen (danach steht
-  `races.results_fetched_at` und das Rennen wird nicht erneut abgefragt).
-  Ein Live-Ticker wäre hier ohnehin nicht sinnvoll, da Wikipedia nicht in
-  Echtzeit editiert wird - Endstände stehen nach Rennende dauerhaft im
-  Artikel.
+  geholt, Renn-Details nur einmal pro Rennen - aber **erst nach dem
+  Rennen** (`RACE_DETAIL_GRACE_DAYS`, siehe "Ergebnisse erst nach dem
+  Rennen abrufen"). Danach steht `races.results_fetched_at` und das Rennen
+  wird nicht erneut abgefragt. Ein Live-Ticker wäre hier ohnehin nicht
+  sinnvoll, da Wikipedia nicht in Echtzeit editiert wird - Endstände stehen
+  nach Rennende dauerhaft im Artikel.
 
 ### Historie: procyclingstats.com blockiert Cloud-Hosting (Stand 2026-09-11)
 
@@ -518,6 +519,107 @@ erneut angefasst, es kommen nur weitere hinzu.
   oder älteren Rennen oft nicht vorhanden. Fehlt eine Quelle, bleibt das
   jeweilige Feld leer statt die ganze Etappe/das ganze Rennen zu verwerfen.
 
+### Ergebnisse erst nach dem Rennen abrufen
+
+Ein Fehler, der Daten dauerhaft verloren hat, ohne irgendwo aufzufallen.
+
+**Was passiert ist.** Der Rückstand des Detail-Backfills war
+`results_fetched_at IS NULL` - ohne Rücksicht darauf, ob das Rennen schon
+gefahren war. Ein Saisonkalender wird aber komplett auf einmal geseedet,
+also standen im Januar auch die Rennen vom Oktober in der Tabelle. Deren
+Wikipedia-Seite existiert zu dem Zeitpunkt oft schon (Streckenverlauf,
+Teilnehmerliste), eine Ergebnistabelle nicht.
+
+Der Abruf lieferte deshalb nichts. `replace_race_details` setzte
+`results_fetched_at = now()` trotzdem - die Funktion markiert **unbedingt**,
+nicht abhängig davon, ob Ergebnisse dabei waren. Damit war das Rennen für
+immer erledigt und wurde nie wieder abgefragt. Das Log meldete zufrieden
+`noch 0 Rennen ausstehend`.
+
+**Wie es sich gezeigt hat.** Im Frontend, nur falsch herum: `js/races.js`
+zeigt bei `results_fetched_at IS NULL` und Startdatum in der Zukunft
+„bevorstehend". Weil die Spalte gesetzt war, stand dort stattdessen
+„Ergebnisse ansehen" und beim Aufklappen „Keine Ergebnisliste erfasst." -
+eine endgültige Aussage über ein Rennen, das noch nicht gefahren war. Das
+Frontend war richtig gebaut; das Backend hat seine Annahme gebrochen.
+
+**Der Fix.** Ein Rennen wird erst zum Abruf angeboten, wenn sein Enddatum
+mindestens `RACE_DETAIL_GRACE_DAYS` (Default 3) Tage zurückliegt:
+
+```sql
+results_fetched_at IS NULL
+AND wiki_url IS NOT NULL
+AND (
+    coalesce(end_date, start_date) IS NULL
+    OR coalesce(end_date, start_date) <= current_date - %(karenz)s::int
+)
+```
+
+Die Bedingung steht als `db_races._DETAILS_FAELLIG` an **einer** Stelle, für
+die Abfrage und für die Zählung. Vorher stand sie zweimal da - die gemeldete
+Zahl „noch N Rennen ausstehend" wäre bei jeder Änderung von der Abfrage
+abgewichen. Ohne Datum (weder Ende noch Start bekannt) lässt sich nicht
+beurteilen, ob das Rennen stattgefunden hat: dann wird abgerufen wie bisher.
+
+Drei Tage, weil Ergebnistabellen meist innerhalb eines Tages eingetragen
+werden und ein Puffer nichts kostet - ein Rennen, das noch wartet, blockiert
+nichts.
+
+**Folge für das Log:** `noch N Rennen ausstehend` zeigt für die laufende
+Saison jetzt eine Zahl größer null, solange Rennen noch bevorstehen. Das ist
+ehrlich, nicht kaputt.
+
+**Die Reparatur** macht Migration 0006. Sie setzt `results_fetched_at` auf
+NULL zurück, und zwar nur bei Zeilen, bei denen der Abruf **beweisbar** zu
+früh war:
+
+```sql
+results_fetched_at::date < coalesce(end_date, start_date)
+```
+
+Also: abgerufen, bevor das Rennen zu Ende war - je Zeile nachrechenbar,
+keine Schätzung. Bewusst **nicht** zurückgesetzt werden Zeilen, die kurz
+nach dem Ende abgerufen wurden und trotzdem keine Ergebnisse haben: die
+können echt undokumentiert sein (schlecht gepflegte Continental-Rennen), und
+sie alle erneut abzurufen wäre Wikipedia-Last ohne belegten Nutzen. Wer das
+doch will:
+
+```sql
+UPDATE races SET results_fetched_at = NULL
+WHERE results_fetched_at IS NOT NULL
+  AND id NOT IN (SELECT DISTINCT race_id FROM race_results);
+```
+
+Diese Migration ändert einen **Bestandswert** - laut "Kein Backup, und was
+das für Migrationen heisst" normalerweise gesperrt. Zulässig ist es hier,
+weil das Kriterium dort die Wiederherstellbarkeit ist, nicht die
+Spaltenart: `results_fetched_at` ist ein Merker, kein Inhalt. Verloren geht
+der Zeitstempel eines Abrufs, der nichts gefunden hat; Name, Datum,
+Kategorie, Wiki-URL und die (leeren) Ergebnisse bleiben unangetastet, und
+der nächste Job-Lauf trägt den Merker neu ein - diesmal nach dem Rennen.
+
+#### Prüfen
+
+```bash
+PGPORT=5599 ./scripts/check-migration-0006.sh
+```
+
+18 Prüfungen über sechs Fälle, alle relativ zum heutigen Datum aufgebaut
+(damit der Test in jedem Jahr läuft): ein Rennen in der Zukunft und eines
+mitten im Verlauf werden zurückgesetzt; eines, das spät abgerufen wurde und
+trotzdem leer ist, eines mit Ergebnissen und eines ohne jedes Datum bleiben
+unangetastet. Dazu: kein Stammdatum und keine Ergebniszeile verändert, und
+die Karenzzeit bestimmt genau, was zum Abruf angeboten wird - bei Karenz 0
+bleiben die künftigen Rennen trotzdem aussen, weil ihr Enddatum in der
+Zukunft liegt.
+
+Gegengeprüft mit vier Manipulationen, jede scheitert an den zuständigen
+Prüfungen: ohne die Datumsbedingung sind die künftigen Rennen wieder fällig
+(der alte Zustand); mit einer eigenen Bedingung in der Zählung weicht die
+gemeldete Zahl von der Abfrage ab; setzt die Migration alles statt nur das
+Beweisbare zurück, verlieren drei korrekte Zeilen ihren Merker; tut sie
+nichts, bleiben die beiden falschen stehen.
+
 ### Bekannte Lücken: Höhenmeter (Platzhalter) und Veranstalter-Website (nicht weiter gescraped)
 
 - **Höhenmeter** (`races.elevation_m`, `race_stages.elevation_m`): wie bei
@@ -844,6 +946,7 @@ PGPORT=5599 ./scripts/check-migration-0002.sh   # Geschlechts-Dimension
 PGPORT=5599 ./scripts/check-migration-0003.sh   # Taxonomie
 PGPORT=5599 ./scripts/check-migration-0004.sh   # Ergebnis-IDs
 PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
+PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 ```
 
