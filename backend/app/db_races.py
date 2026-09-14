@@ -30,6 +30,7 @@ einer anderen Quelle die Werte nachträgt (analog zu riders.uci_points).
 import logging
 from typing import Optional
 
+from .config import RACE_DETAIL_GRACE_DAYS
 from .db import _connect, stream_query
 from .models import RaceRecord, RaceResultEntry, RaceStage, RiderRaceResult
 from .gender import GENDER_DEFAULT, gender_prefix
@@ -151,23 +152,53 @@ def upsert_race_skeleton(
 # ---------------------------------------------------------------------------
 
 
+# Wann ein Rennen für den Detail-Abruf fällig ist. EINE Bedingung für die
+# Abfrage und die Zählung: vorher stand sie zweimal da, und die gemeldete
+# Zahl "noch N Rennen ausstehend" wäre bei jeder Änderung von der Abfrage
+# abgewichen.
+#
+# Die Karenzzeit ist der eigentliche Fix. Vorher galt nur
+# "results_fetched_at IS NULL": damit wurde ein Rennen abgerufen, sobald es
+# geseedet war - auch eines, das erst Monate später stattfindet. Die
+# Wikipedia-Seite existiert dann oft schon, eine Ergebnistabelle nicht. Der
+# Abruf lieferte nichts, replace_race_details setzte results_fetched_at
+# trotzdem, und das Rennen wurde NIE wieder abgefragt. Die Ergebnisse waren
+# damit dauerhaft verloren, ohne dass irgendwo ein Fehler stand.
+#
+# Kein Enddatum und kein Startdatum: dann lässt sich nicht beurteilen, ob
+# das Rennen schon stattgefunden hat - also abrufen wie bisher.
+_DETAILS_FAELLIG = """
+    results_fetched_at IS NULL
+    AND wiki_url IS NOT NULL
+    AND (
+        coalesce(end_date, start_date) IS NULL
+        OR coalesce(end_date, start_date) <= current_date - %(karenz)s::int
+    )
+"""
+
+
 def get_races_missing_details(limit: int) -> list[dict]:
     """Rennen ohne Detail-Backfill, priorisiert nach Kategorie (World Tour
     zuerst, dann ProSeries, dann Continental) und Saison (neueste zuerst -
-    eher vollständig dokumentiert als sehr alte Rennen)."""
+    eher vollständig dokumentiert als sehr alte Rennen).
+
+    Nur Rennen, deren Karenzzeit abgelaufen ist (siehe _DETAILS_FAELLIG).
+    Ein Rennen der laufenden Saison, das noch aussteht, bleibt im Rückstand
+    und wird nach seinem Ende abgerufen - das ist gewollt, und die gemeldete
+    Zahl "noch N ausstehend" ist damit ehrlich statt null."""
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT id, name, season, category, circuit, wiki_url
             FROM races
-            WHERE results_fetched_at IS NULL AND wiki_url IS NOT NULL
+            WHERE {_DETAILS_FAELLIG}
             ORDER BY
                 CASE category WHEN 'wt' THEN 0 WHEN 'proseries' THEN 1 ELSE 2 END,
                 season DESC,
                 name
-            LIMIT %s
+            LIMIT %(limit)s
             """,
-            (limit,),
+            {"karenz": RACE_DETAIL_GRACE_DAYS, "limit": limit},
         ).fetchall()
     return rows
 
@@ -449,9 +480,12 @@ def get_race_count(category: Optional[str] = None) -> int:
 
 
 def get_races_missing_details_count() -> int:
+    """Wie viele Rennen noch auf ihren Detail-Abruf warten - dieselbe
+    Bedingung wie get_races_missing_details (siehe _DETAILS_FAELLIG)."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT count(*) AS n FROM races WHERE results_fetched_at IS NULL AND wiki_url IS NOT NULL"
+            f"SELECT count(*) AS n FROM races WHERE {_DETAILS_FAELLIG}",
+            {"karenz": RACE_DETAIL_GRACE_DAYS},
         ).fetchone()
     return row["n"] if row else 0
 
