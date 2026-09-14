@@ -69,6 +69,12 @@ RIDER_HISTORY_BATCH_SIZE = int(os.environ.get("RIDER_HISTORY_BATCH_SIZE", "30"))
 # Batch (bis zu 50 Titel) nur 2 Requests nötig sind statt einem pro Fahrer.
 STRAVA_BATCH_SIZE = int(os.environ.get("STRAVA_BATCH_SIZE", "50"))
 
+# Familiennamen-Abgleich über Wikidata (Befund 16, siehe
+# scrapers/wikidata.py::fetch_family_names). Läuft im selben Job und mit
+# derselben Begründung für die Batchgröße wie Strava - hier sind es drei
+# Requests pro Batch (Titel->QID, Aussagen, Labels) statt zwei.
+NAME_BATCH_SIZE = int(os.environ.get("NAME_BATCH_SIZE", "50"))
+
 # Renn-Historie (WorldTour/ProSeries/Continental seit RACE_HISTORY_START_YEAR,
 # siehe app/db_races.py + scrapers/wikipedia_race_history.py): geschätzt
 # 1.000-1.500 Rennen (Stand Startjahr 2020), jedes mit mind. einem eigenen

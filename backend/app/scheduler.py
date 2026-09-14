@@ -21,6 +21,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from . import cache, db, db_races
 from .config import (
     JOB_START_STAGGER_SECONDS,
+    NAME_BATCH_SIZE,
     RACE_HISTORY_CIRCUITS,
     RACE_HISTORY_DETAIL_BATCH_SIZE,
     RACE_HISTORY_RUN_SECONDS,
@@ -37,10 +38,15 @@ from .config import (
 )
 from .models import Team
 from .news.rss import fetch_all_news
-from .scrapers.wikidata import fetch_strava_urls
-from .scrapers.wikipedia import wiki_title_from_url
+from .scrapers.wikidata import fetch_family_names, fetch_strava_urls
+from .scrapers.wikipedia import fetch_wikidata_ids, wiki_title_from_url
 from .scrapers.wikipedia_race_history import fetch_race_details, fetch_season_race_list
-from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team, split_name
+from .scrapers.wikipedia_riders import (
+    fetch_rider_history,
+    nachname_aus_wikidata,
+    roster_riders_for_team,
+    split_name,
+)
 from .scrapers.wikipedia_teams import fetch_current_worldteams
 from .taxonomy import achsen_kombinationen
 
@@ -298,6 +304,77 @@ def refresh_rider_details() -> None:
         logger.info(
             "Strava-Abgleich: %d Fahrer geprüft, %d mit Profil gefunden", len(pending_strava), found
         )
+
+    _namen_abgleichen()
+
+
+def _namen_abgleichen() -> None:
+    """Familiennamen über Wikidata prüfen (Befund 16).
+
+    Die Heuristik `split_name` liegt bei spanischen und portugiesischen
+    Doppelnachnamen falsch ("Juan Ayuso Pesquera" -> Nachname "Pesquera"
+    statt "Ayuso Pesquera"). Wikidata führt die Namensteile als eigene
+    P734-Aussagen; `nachname_aus_wikidata` übernimmt sie nur, wenn sie als
+    Suffix des vollen Namens aufgehen (Begründung dort).
+
+    Eigene Funktion, nicht in refresh_rider_details hineingeschrieben: der
+    Abgleich hat seinen eigenen Rückstand, seine eigene Batchgröße und seine
+    eigene Fehlerbehandlung. Er läuft im selben Job, weil er dieselbe
+    Wikidata-Maschinerie benutzt und ebenfalls einmal pro Fahrer stattfindet.
+
+    Ein Batch pro Lauf, ausserhalb des Zeitbudgets - genau wie der
+    Strava-Abgleich darüber, und aus demselben Grund: drei Requests für bis
+    zu 50 Fahrer fallen neben dem Budget von RIDER_DETAILS_RUN_SECONDS nicht
+    ins Gewicht. Zwei solche Phasen hintereinander sind jetzt allerdings der
+    Grund, das Verhältnis von Budget zu Intervall im Blick zu behalten
+    (120 s Budget gegen 180 s Intervall).
+
+    Berichtet, was herauskam - die Zahlen sind nur an echten Daten messbar,
+    und Wikidata ist aus der Entwicklungsumgebung nicht erreichbar. Bleibt
+    "korrigiert" dauerhaft bei 0, während "geprüft" hochläuft, stimmt die
+    Annahme über die Antwortform nicht (siehe wikidata._claim_ziel)."""
+    offen = db.get_riders_missing_name_source(NAME_BATCH_SIZE)
+    if not offen:
+        return
+
+    titel = [wiki_title_from_url(r["wiki_url"]) for r in offen]
+    try:
+        qid_je_titel = fetch_wikidata_ids(titel)
+        namen_je_qid = fetch_family_names(sorted(set(qid_je_titel.values())))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Familiennamen-Abgleich (Wikidata) fehlgeschlagen: %s", exc)
+        return
+
+    korrigiert = bestaetigt = ohne_treffer = qids_gesetzt = 0
+    for zeile, t in zip(offen, titel):
+        qid = qid_je_titel.get(t)
+        if qid and db.set_rider_qid(zeile["id"], qid):
+            qids_gesetzt += 1
+
+        treffer = nachname_aus_wikidata(zeile["name"], namen_je_qid.get(qid, []) if qid else [])
+        if treffer is None:
+            # Nichts Passendes - die Heuristik bleibt stehen, und der Fahrer
+            # wird nicht erneut gefragt.
+            db.set_rider_name(zeile["id"], *split_name(zeile["name"]), "heuristik")
+            ohne_treffer += 1
+            continue
+        vorname, nachname = treffer
+        db.set_rider_name(zeile["id"], vorname, nachname, "wikidata")
+        if treffer == split_name(zeile["name"]):
+            bestaetigt += 1
+        else:
+            korrigiert += 1
+            logger.info(
+                "Namenstrennung korrigiert: %r -> Vorname %r / Nachname %r "
+                "(Heuristik: %r / %r)",
+                zeile["name"], vorname, nachname, *split_name(zeile["name"]),
+            )
+
+    logger.info(
+        "Familiennamen-Abgleich: %d Fahrer geprüft, %d korrigiert, %d bestätigt, "
+        "%d ohne Wikidata-Treffer, %d QIDs nachgetragen",
+        len(offen), korrigiert, bestaetigt, ohne_treffer, qids_gesetzt,
+    )
 
 
 def refresh_race_history() -> None:

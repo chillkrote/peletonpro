@@ -491,6 +491,69 @@ def set_strava_url(rider_id: str, strava_url: Optional[str]) -> None:
         )
 
 
+def get_riders_missing_name_source(limit: int) -> list[dict]:
+    """Fahrer, für die noch nicht bei Wikidata nach dem Familiennamen
+    gefragt wurde (Befund 16, siehe Migration 0005).
+
+    Einmaliger Check pro Fahrer, wie bei der Historie und bei Strava: ein
+    nachträglich in Wikidata eingetragener Familienname ist kein Ereignis,
+    auf das zeitnah reagiert werden müsste. Ein erneuter Durchlauf über alle
+    ist ein `UPDATE riders SET name_source = NULL`."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "SELECT id, name, wiki_url FROM riders "
+            "WHERE name_source IS NULL ORDER BY name LIMIT %s",
+            (limit,),
+        )
+        return cur.fetchall()
+
+
+def set_rider_name(
+    rider_id: str, first_name: str, last_name: str, name_source: str
+) -> None:
+    """Schreibt die Namenstrennung und hält fest, woher sie kommt.
+
+    `name` wird NICHT angefasst: der volle Name ist die Quelle, aus der sich
+    die Trennung jederzeit neu berechnen lässt - das ist die Bedingung, unter
+    der diese Datenbank ohne Backup überhaupt geändert werden darf (siehe
+    README, "Kein Backup, und was das für Migrationen heisst")."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE riders SET first_name = %s, last_name = %s, name_source = %s "
+            "WHERE id = %s",
+            (first_name, last_name, name_source, rider_id),
+        )
+
+
+def set_rider_qid(rider_id: str, qid: str) -> bool:
+    """Trägt die Wikidata-QID nach. False, wenn sie schon einem anderen
+    Fahrer gehört.
+
+    Die Spalte kam mit Migration 0002 und wurde bisher von NICHTS
+    geschrieben - sie war leer. Der Familiennamen-Job löst den
+    Wikipedia-Titel ohnehin zur QID auf, also wird sie hier mitgenommen:
+    Befund 7 Schritt 3 (riders.id auf die QID umstellen) braucht sie als
+    Vorarbeit.
+
+    Auf der Spalte liegt ein partieller UNIQUE-Index. Zwei Fahrer auf
+    derselben QID wären ein Datenfehler (eine Wikipedia-Weiterleitung, zwei
+    Kaderzeilen für dieselbe Person) - deshalb wird der Verstoß gemeldet und
+    nicht verschluckt, aber er darf den Lauf nicht abbrechen."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE riders SET wikidata_qid = %s WHERE id = %s", (qid, rider_id)
+            )
+        return True
+    except psycopg.errors.UniqueViolation:
+        logger.warning(
+            "Wikidata-QID %s gehört schon einem anderen Fahrer - bei %s nicht "
+            "gesetzt. Deutet auf zwei Einträge für dieselbe Person hin.",
+            qid, rider_id,
+        )
+        return False
+
+
 def ensure_season_point_placeholders() -> int:
     """Legt für jede WorldTour-Saison aus rider_team_stints eine leere
     Platzhalter-Zeile in rider_season_points an (uci_points bleibt NULL),
@@ -638,7 +701,8 @@ def export_teams():
 def export_riders():
     return stream_query(
         """
-        SELECT r.id, r.first_name, r.last_name, r.name, r.country, r.birth_date,
+        SELECT r.id, r.first_name, r.last_name, r.name, r.name_source,
+               r.country, r.birth_date,
                r.gender, r.wikidata_qid, r.wiki_url, r.current_team_id,
                t.name AS current_team_name,
                r.strava_url, r.history_fetched_at, r.last_updated
