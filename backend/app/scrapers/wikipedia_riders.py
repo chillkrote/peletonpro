@@ -21,14 +21,13 @@ temporärer Render-Diagnose-Route geprüft, siehe backend/README.md):
 """
 import logging
 import re
-import unicodedata
 from typing import Optional
 
 from bs4 import BeautifulSoup
 
 from ..models import RiderHistory, RiderStint, RosterRider, Team
 from ..gender import GENDER_DEFAULT, gender_prefix
-from ..text import normalize_dashes, slugify
+from ..text import normalize_dashes, slugify, vergleichsform
 from .wikipedia import fetch_lead_section, fetch_section, wiki_title_from_url
 
 logger = logging.getLogger(__name__)
@@ -217,19 +216,6 @@ def split_name(full_name: str) -> tuple[str, str]:
     return first_name, last_name
 
 
-def _vergleichsform(text: str) -> str:
-    """Kleinschreibung ohne diakritische Zeichen - nur zum Vergleichen.
-
-    Wikidata schreibt Familiennamen nicht immer so wie der
-    Wikipedia-Artikeltitel: "Pogacar" gegen "Pogačar", "Kung" gegen "Küng".
-    Ohne diese Faltung würden genau die Namen abgelehnt, um die es geht.
-    NICHT zum Speichern: geschrieben wird immer die Schreibweise aus dem
-    vollen Namen, damit `first_name`/`last_name` zu `name` passen."""
-    zerlegt = unicodedata.normalize("NFKD", text)
-    ohne_zeichen = "".join(z for z in zerlegt if not unicodedata.combining(z))
-    return ohne_zeichen.casefold()
-
-
 def nachname_aus_wikidata(
     full_name: str, family_labels: list[str]
 ) -> Optional[tuple[str, str]]:
@@ -271,7 +257,7 @@ def nachname_aus_wikidata(
             # Vornamen übrig - das ist kein Treffer, sondern ein Hinweis,
             # dass Wikidata etwas anderes meint.
             continue
-        if _vergleichsform(" ".join(worte[-len(teile):])) == _vergleichsform(kandidat):
+        if vergleichsform(" ".join(worte[-len(teile):])) == vergleichsform(kandidat):
             return " ".join(worte[:-len(teile)]), " ".join(worte[-len(teile):])
     return None
 

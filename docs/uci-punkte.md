@@ -382,11 +382,78 @@ Quelle.
 Spitzenfahrer. Nicht die ganze Rangliste, aber ein nachrechenbarer,
 prüfbarer Anfang.
 
-### Die Reihenfolge, die ich vorschlagen würde
+### Schritt 1 ist gebaut: der Abgleich Rennname → `races.id`
 
-1. **Die 121 `race_id` zuordnen** (halbautomatisch: Vorschläge per
-   Namensähnlichkeit, Bestätigung von Hand). Danach sind `gc` und `etappe`
-   für die WorldTour rechenbar.
+`app/uci_zuordnung.py` läuft beim Start direkt nach dem Reglement-Loader
+und setzt `uci_rennstufe.race_id`, **soweit es das belegen kann**. Drei
+Stufen, im Log getrennt gezählt:
+
+| Stufe | Regel |
+|---|---|
+| `exakt` | Vergleichsform beider Namen identisch |
+| `enthalten` | der Reglement-Name steht als ganze Wortfolge in **genau einem** Kandidaten (`Tour of Guangxi` in `Gree–Tour of Guangxi`) |
+| `aehnlich` | Ähnlichkeit ≥ 0,90 **und** mindestens 0,05 besser als der zweitbeste |
+
+Getrennt gezählt, weil die drei nicht gleich verlässlich sind: wer die
+Zahlen im Log liest, weiß, wie viel davon geraten ist. `exakt` braucht
+keine Nachprüfung, `aehnlich` schon.
+
+**Die Vergleichsform ist der halbe Erfolg.** Das Reglement schreibt
+„Paris - Nice" und „Tirreno - Adriatico", Wikipedia „Paris–Nice". Ohne
+Vereinheitlichung der Striche und der Leerzeichen um sie herum wäre **keine
+einzige** dieser Zuordnungen exakt. Dazu die Faltung von Akzenten
+(`text.vergleichsform`, dieselbe Funktion, die der Familiennamen-Abgleich
+benutzt): „Liège-Bastogne-Liège" → `liege-bastogne-liege`.
+
+**Kandidaten sind nur Rennen derselben Saison, desselben Geschlechts und
+`category = 'wt'`.** Alle drei Filter sind einzeln gegengeprüft.
+
+**Die Schwelle ist absichtlich zu streng.** „Omloop Nieuwsblad" (Reglement)
+gegen „Omloop Het Nieuwsblad" (Wikipedia) erreicht **0,895** — knapp unter
+0,90, also bleibt die Zeile offen, obwohl die Zuordnung inhaltlich richtig
+wäre. Das ist der Preis, und er ist die richtige Richtung: eine offene
+Zuordnung fällt als `race_id IS NULL` auf, eine falsche erzeugt still zu
+hohe Punktzahlen. Solche Fälle gehören von Hand gesetzt — und eine von Hand
+gesetzte `race_id` wird von keinem Lauf wieder angefasst.
+
+**Es läuft bei jedem Start und über alle Jahrgänge.** Reines SQL, keine
+externen Abrufe, und nur an Zeilen mit `race_id IS NULL` — ist alles
+zugeordnet, tut es nichts. Wiederholt laufen **muss** es, weil die Rennen
+einer Saison erst über die Zeit geseedet werden: ein Rennen, das beim ersten
+Lauf noch nicht in `races` stand, wird beim nächsten gefunden. Ein Takt wie
+bei den Wikipedia-Jobs (`app/kadenz.py`) wäre hier also falsch.
+
+**Die 52 Frauen-Zeilen können heute nicht aufgehen.** `races` enthält keine
+Frauenrennen — der Kalender wird nur für Männer geseedet. Das ist keine
+Schwäche des Abgleichs, sondern die nächste offene Baustelle.
+
+#### Prüfen
+
+```bash
+DATABASE_URL=postgresql://... python3 scripts/check-uci-zuordnung.py
+```
+
+26 Prüfungen, leere Datenbank genügt. Die Hälfte belegt, dass etwas **nicht**
+passiert: der Reglement-Tippfehler bleibt offen, zwei gleichnamige Zeilen in
+`races` werden nicht geraten, ein Rennen der falschen Kategorie oder Saison
+ist kein Kandidat, keine Frauen-Zeile wird auf ein Männerrennen gelegt.
+
+Sechs Gegenproben, jede bricht genau die zuständige Prüfung: Geschlechts-
+oder Kategoriefilter entfernt, Schwelle auf 0,50 gesenkt, Abstandsprüfung
+ausgebaut, gesetzte `race_id` neu bewertet, Schleife auf die laufende Saison
+beschränkt.
+
+**Eine siebte Gegenprobe blieb grün**, und das ist ein Befund, nicht ein
+Versehen: der Zweig, der zwei *exakt* gleiche Kandidaten abweist, ist
+**redundant** — zwei identische Namen treffen auch den Enthalten-Zweig
+zweimal und landen dort ebenfalls bei „mehrdeutig". Der Zweig bleibt
+stehen, weil er den Fall benennt, aber im Code steht jetzt ausdrücklich,
+dass sich niemand beim Umbau des Enthalten-Zweigs auf ihn verlassen darf.
+
+### Die weitere Reihenfolge
+
+1. ~~Die 121 `race_id` zuordnen~~ — **gebaut**; wie viele davon in Produktion
+   aufgehen, sagt die Log-Zeile `Rennzuordnung 2026: …` nach dem Deploy.
 2. **Die Berechnung für `gc` und `etappe`** bauen, inklusive der Ausfallregel
    aus 2.6.001, und gegen eine veröffentlichte Rangliste gegenprüfen. Erst
    dieser Vergleich zeigt, ob die Kette stimmt.

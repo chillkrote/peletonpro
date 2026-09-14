@@ -434,11 +434,16 @@ Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt
 
 Zwei Dinge, die für eine Berechnung noch fehlen:
 
-1. **`uci_rennstufe.race_id` ist überall `NULL`.** Der Reglement-Name
-   lässt sich nicht auf `races.id` abbilden — das Reglement schreibt
-   „Oomlop Nieuwsblad" für Omloop Nieuwsblad. Die 121 Zuordnungen sind ein
-   eigener, bewusster Schritt; bis dahin ist die Lücke abfragbar statt
-   unsichtbar.
+1. **`uci_rennstufe.race_id`** wird von `app/uci_zuordnung.py` beim Start
+   gesetzt, soweit belegbar — drei Stufen (`exakt`, `enthalten`,
+   `aehnlich`), im Log getrennt gezählt, Kandidaten nur aus derselben
+   Saison, demselben Geschlecht und `category = 'wt'`. Die Schwelle ist
+   absichtlich zu streng: „Omloop Nieuwsblad" gegen „Omloop Het
+   Nieuwsblad" erreicht 0,895 und bleibt offen. Eine offene Zuordnung
+   fällt als `NULL` auf, eine falsche erzeugt still zu hohe Punktzahlen.
+   Von Hand gesetzte Zuordnungen werden nie überschrieben. Die 52
+   Frauen-Zeilen können heute nicht aufgehen: `races` enthält keine
+   Frauenrennen.
 2. **`taxonomy.Category` reicht nicht.** Die Skala unterscheidet im
    Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U — auf Platz 1 sind
    das 125, 40 und 30 Punkte. Alle drei landen heute in `continental`.
@@ -1115,6 +1120,7 @@ PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
 PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
 DATABASE_URL=... python3 scripts/check-kadenz.py # Migration 0007 + Saison-Kadenz
 DATABASE_URL=... python3 scripts/check-uci-reglement.py  # Migration 0008 + Loader
+DATABASE_URL=... python3 scripts/check-uci-zuordnung.py  # Rennname -> races.id
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 python3 scripts/check-uci-punkte.py             # UCI-Punkteskalen unter docs/
 ```

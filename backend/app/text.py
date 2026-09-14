@@ -7,6 +7,7 @@ genau das ist bei den Fahrer-Zeiträumen passiert (siehe
 scrapers/wikipedia_riders.YEAR_RANGE_RE).
 """
 import re
+import unicodedata
 
 # Alle Striche, die in Zeitraum-Angaben auftreten, auf den einfachen
 # Bindestrich normalisieren:
@@ -30,6 +31,25 @@ def normalize_dashes(text: str) -> str:
     widersprachen sich also. Jetzt eine Stelle für alle.
     """
     return _SPACE_RE.sub(" ", _DASH_RE.sub("-", text))
+
+
+def vergleichsform(text: str) -> str:
+    """Kleinschreibung ohne diakritische Zeichen - nur zum Vergleichen.
+
+    Wikidata schreibt Familiennamen nicht immer so wie der
+    Wikipedia-Artikeltitel: "Pogacar" gegen "Pogačar", "Kung" gegen "Küng".
+    Ohne diese Faltung würden genau die Namen abgelehnt, um die es geht.
+    NICHT zum Speichern: geschrieben wird immer die Schreibweise aus der
+    Quelle.
+
+    Lag vorher als `_vergleichsform` in scrapers/wikipedia_riders.py. Der
+    Abgleich der Reglement-Rennnamen (app/uci_zuordnung.py) braucht
+    dieselbe Faltung - "Liège-Bastogne-Liège" gegen "Liege-Bastogne-Liege" -
+    und eine zweite Kopie wäre genau die Doppelstruktur, die dieses Modul
+    verhindern soll. Das Verhalten ist unverändert."""
+    zerlegt = unicodedata.normalize("NFKD", text)
+    ohne_zeichen = "".join(z for z in zerlegt if not unicodedata.combining(z))
+    return ohne_zeichen.casefold()
 
 
 # ---------------------------------------------------------------------------

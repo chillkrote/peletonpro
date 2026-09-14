@@ -14,6 +14,7 @@ from .config import CORS_ORIGINS, REQUIRE_DATABASE
 from .routers import export, news, race_history, riders, teams
 from .migrations import run_migrations
 from .uci_punkte import lade_reglement
+from .uci_zuordnung import zuordnen
 from .ratelimit import limiter
 from .routers.messages import INTERNAL_ERROR
 from .scheduler import start_scheduler
@@ -156,6 +157,12 @@ async def lifespan(app: FastAPI):
     # weil diese Instanz mehrmals pro Stunde neu startet. Nach den
     # Migrationen, weil die Tabellen von 0008 kommen.
     lade_reglement()
+
+    # Und die Reglement-Rennnamen den Zeilen in races zuordnen, soweit
+    # belegbar. Muss wiederholt laufen, weil die Rennen einer Saison erst
+    # über die Zeit geseedet werden - reines SQL, kein externer Abruf, und
+    # es arbeitet nur an Zeilen mit race_id IS NULL.
+    zuordnen()
 
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den
