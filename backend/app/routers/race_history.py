@@ -1,11 +1,12 @@
 import logging
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from .. import db, db_races
-from ..gender import GENDER_DEFAULT
+from ..gender import GENDER_DEFAULT, Gender
 from ..ratelimit import RATE_LIMIT_RACE_DETAIL, limiter
+from ..taxonomy import Category, Circuit
 from .messages import DB_UNAVAILABLE, RACES_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,9 @@ DEFAULT_LIMIT = 200
 @router.get("")
 def list_races(
     season: Optional[int] = None,
-    category: Optional[Literal["wt", "proseries", "continental"]] = None,
-    circuit: Optional[Literal["africa", "asia", "europe", "america", "oceania"]] = None,
-    gender: Literal["m", "w"] = GENDER_DEFAULT,
+    category: Optional[Category] = None,
+    circuit: Optional[Circuit] = None,
+    gender: Gender = GENDER_DEFAULT,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
@@ -68,7 +69,7 @@ def list_races(
 # probiert die Routen in Deklarationsreihenfolge, sonst würde "seasons" als
 # race_id durchgehen und ein 404 liefern.
 @router.get("/seasons")
-def list_seasons(gender: Literal["m", "w"] = GENDER_DEFAULT):
+def list_seasons(gender: Gender = GENDER_DEFAULT):
     """Nur die Saisons, für die Rennen vorliegen - für die Saison-Tabs.
     Vorher leitete das Frontend sie aus der kompletten Renn-Liste ab und
     musste dafür alle Saisons auf einmal laden."""

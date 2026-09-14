@@ -1,6 +1,8 @@
 """Zentrale Konfiguration für Backend, Scraper und Scheduler."""
 import os
 
+from .taxonomy import CIRCUITS
+
 # CORS: welche Origins dürfen die API aufrufen (GitHub Pages + lokale Entwicklung)
 CORS_ORIGINS = [
     origin.strip()
@@ -94,7 +96,11 @@ RACE_HISTORY_RUN_SECONDS = float(os.environ.get("RACE_HISTORY_RUN_SECONDS", "600
 JOB_START_STAGGER_SECONDS = int(os.environ.get("JOB_START_STAGGER_SECONDS", "5"))
 RACE_HISTORY_START_YEAR = int(os.environ.get("RACE_HISTORY_START_YEAR", "2020"))
 RACE_HISTORY_DETAIL_BATCH_SIZE = int(os.environ.get("RACE_HISTORY_DETAIL_BATCH_SIZE", "15"))
-RACE_HISTORY_CIRCUITS = ("africa", "asia", "europe", "america", "oceania")
+# Welche Continental-Circuits abgedeckt werden. Die möglichen Werte stehen
+# in app/taxonomy.py (CIRCUITS) - hier steht nur, welche davon der Scheduler
+# abarbeitet. Heute alle; ein Teil davon wäre eine Drosselung, kein neues
+# Vokabular.
+RACE_HISTORY_CIRCUITS: tuple[str, ...] = CIRCUITS
 
 # Ohne DATABASE_URL läuft die App weiter und liefert leere Fahrer- und
 # Renn-Listen (siehe app/db.py, is_configured). Für lokale Entwicklung ist

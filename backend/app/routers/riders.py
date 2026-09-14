@@ -1,10 +1,10 @@
 import logging
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import db
-from ..gender import GENDER_DEFAULT
+from ..gender import GENDER_DEFAULT, Gender
 from .messages import DB_UNAVAILABLE, RIDERS_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ DEFAULT_LIMIT = 1000
 @router.get("")
 def list_riders(
     team: Optional[str] = None,
-    gender: Literal["m", "w"] = GENDER_DEFAULT,
+    gender: Gender = GENDER_DEFAULT,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):

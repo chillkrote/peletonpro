@@ -42,6 +42,7 @@ from .scrapers.wikipedia import wiki_title_from_url
 from .scrapers.wikipedia_race_history import fetch_race_details, fetch_season_race_list
 from .scrapers.wikipedia_riders import fetch_rider_history, roster_riders_for_team, split_name
 from .scrapers.wikipedia_teams import fetch_current_worldteams
+from .taxonomy import achsen_kombinationen
 
 logger = logging.getLogger(__name__)
 
@@ -299,14 +300,6 @@ def refresh_rider_details() -> None:
         )
 
 
-def _race_history_series() -> list[tuple[str, str | None]]:
-    """Alle (Kategorie, Circuit)-Kombinationen, die abgedeckt werden -
-    Circuit ist nur bei category == 'continental' gesetzt."""
-    series: list[tuple[str, str | None]] = [("wt", None), ("proseries", None)]
-    series += [("continental", circuit) for circuit in RACE_HISTORY_CIRCUITS]
-    return series
-
-
 def refresh_race_history() -> None:
     """Baut die (persistente) Renn-Historie-Datenbank auf: World Tour +
     ProSeries + alle Continental Touren seit RACE_HISTORY_START_YEAR (siehe
@@ -335,7 +328,9 @@ def refresh_race_history() -> None:
     budget = Budget(RACE_HISTORY_RUN_SECONDS)
 
     seeded_now = 0
-    for category, circuit in _race_history_series():
+    # Die (Kategorie, Circuit)-Paare stehen in app/taxonomy.py, nicht hier:
+    # sie ergeben sich aus den Achsen selbst (siehe achsen_kombinationen).
+    for category, circuit in achsen_kombinationen(RACE_HISTORY_CIRCUITS):
         for year in range(RACE_HISTORY_START_YEAR, RACE_SEASON_YEAR + 1):
             if budget.expired:
                 break

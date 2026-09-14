@@ -1,12 +1,13 @@
 import logging
-from typing import Literal, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from .. import db, db_races
 from ..config import RACE_SEASON_YEAR
-from ..gender import GENDER_DEFAULT
+from ..gender import GENDER_DEFAULT, Gender
 from ..ratelimit import RATE_LIMIT_TEAM_STATS, limiter
+from ..taxonomy import TeamCategory
 from .messages import DB_UNAVAILABLE, RIDERS_NOT_CONFIGURED
 
 logger = logging.getLogger(__name__)
@@ -16,8 +17,8 @@ router = APIRouter(prefix="/api/teams", tags=["teams"])
 
 @router.get("")
 def list_teams(
-    category: Optional[Literal["wt"]] = None,
-    gender: Literal["m", "w"] = GENDER_DEFAULT,
+    category: Optional[TeamCategory] = None,
+    gender: Gender = GENDER_DEFAULT,
 ):
     """Die aktuellen WorldTeams - aus der Datenbank.
 
@@ -32,12 +33,11 @@ def list_teams(
     das, was er vorher bekam (siehe backend/README.md,
     "Geschlechts-Dimension").
 
-    `category` akzeptiert nur "wt": die Quelle (Wikipedia-Artikel "UCI World
-    Tour") listet ausschließlich WorldTeams, und der Scraper schreibt
-    entsprechend fest category="wt". Vorher nahm der Parameter zusätzlich
-    "pro" und "cont" an und konnte dafür nie etwas zurückgeben - ein Filter,
-    der aussah als funktioniere er. Kommen Frauen-WorldTeams oder ProTeams
-    dazu, gehören die Werte hier und im Scraper erweitert, nicht nur hier.
+    `category` nimmt genau die Kategorien an, die in der teams-Tabelle
+    vorkommen können: `TeamCategory` in app/taxonomy.py, dort steht warum das
+    derzeit nur "wt" ist und was beim Erweitern dazugehört. Vorher nahm der
+    Parameter zusätzlich "pro" und "cont" an und konnte dafür nie etwas
+    zurückgeben - ein Filter, der aussah als funktioniere er.
     """
     # Listen-Endpunkte antworten in diesem Projekt mit 200 und error im
     # Rumpf, Detail-Endpunkte mit 503 (siehe routers/riders.py). Der Grund

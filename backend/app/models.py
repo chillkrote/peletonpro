@@ -1,16 +1,23 @@
 """Pydantic-Schemas für alle API-Antworten."""
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel
+
+from .gender import GENDER_DEFAULT, Gender
+from .taxonomy import Category, Circuit
 
 
 class Team(BaseModel):
     id: str
     name: str
-    category: Literal["wt", "pro", "cont"]
+    category: Category
+    """Ein Vokabular für Rennen und Teams, siehe app/taxonomy.py. Stand hier
+    vorher als eigenes Literal mit den Werten wt/pro/cont - ein zweites
+    Vokabular für dieselbe Sache, dessen Werte "pro" und "cont" keine Zeile
+    je enthalten konnte."""
     country: str
     code: str
-    gender: Literal["m", "w"] = "m"
+    gender: Gender = GENDER_DEFAULT
     """Männer- oder Frauen-Team. Default 'm': alles Gespeicherte ist
     Männer-Radsport, die Scraper lesen nur Männer-Quellen (siehe
     backend/README.md, "Geschlechts-Dimension")."""
@@ -68,7 +75,7 @@ class Rider(BaseModel):
     current_team_id: Optional[str] = None
     current_team_name: Optional[str] = None
     strava_url: Optional[str] = None
-    gender: Literal["m", "w"] = "m"
+    gender: Gender = GENDER_DEFAULT
     """Siehe Team.gender."""
 
 
@@ -136,8 +143,11 @@ class RaceRecord(BaseModel):
     id: str
     name: str
     season: int
-    category: Literal["wt", "proseries", "continental"]
-    circuit: Optional[str] = None  # nur bei category == "continental": africa/asia/europe/america/oceania
+    category: Category
+    circuit: Optional[Circuit] = None
+    """Nur bei `category == "continental"` gesetzt - die UCI gliedert nur die
+    dritte Stufe geografisch. Die Regel steht in app/taxonomy.py und wird
+    von der Datenbank als CHECK durchgesetzt (Migration 0003)."""
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     num_stages: Optional[int] = None
@@ -147,7 +157,7 @@ class RaceRecord(BaseModel):
     backend/README.md, Abschnitt "Bekannte Lücke") - bleibt NULL, bis ein
     künftiger Import aus einer anderen Quelle die Werte nachträgt."""
     wiki_url: Optional[str] = None
-    gender: Literal["m", "w"] = "m"
+    gender: Gender = GENDER_DEFAULT
     """Siehe Team.gender."""
     is_grand_tour: bool = False
     """Ob das Rennen eine Grand Tour ist. Nicht gescraped und keine

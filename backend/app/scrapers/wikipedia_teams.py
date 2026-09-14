@@ -74,6 +74,9 @@ def _parse_team_row(row) -> Team | None:
     return Team(
         id=team_id_for(name),
         name=name,
+        # Die Quelle (Artikel "UCI World Tour") listet ausschliesslich
+        # WorldTeams. Für ProTeams und Continental Teams gibt es eigene
+        # Seiten, siehe README "Ein Vokabular für die drei Achsen".
         category="wt",
         country=country or "?",
         # Kürzel aus dem Namens-Slug, NICHT aus der ID: das Präfix einer

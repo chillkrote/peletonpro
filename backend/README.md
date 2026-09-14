@@ -705,6 +705,33 @@ einer externen Datei lagen, scheiterte das Einspielen einmal still, und
 die Vergleiche verglichen 0 Zeilen mit 0 Zeilen und bestanden scheinbar.
 Das Skript bricht jetzt ab, wenn keine Testdaten drin sind.
 
+Je Migration gibt es zusätzlich ein eigenes Skript, das die fachliche
+Wirkung prüft statt nur den Ablauf:
+
+```bash
+PGPORT=5599 ./scripts/check-migration-0002.sh   # Geschlechts-Dimension
+PGPORT=5599 ./scripts/check-migration-0003.sh   # Taxonomie
+python3 scripts/check-vokabular.py              # braucht keine Datenbank
+```
+
+`check-migration-0003.sh` prüft sechs Dinge: die Constraints werden auf
+einer leeren Datenbank gesetzt; eine befüllte wird migriert, ohne dass sich
+eine Zeilenzahl oder ein bestehender Spaltenwert ändert; jede der sechs
+unmöglichen `(category, circuit)`-Kombinationen wird vom richtigen
+Constraint abgelehnt und jede der fünf möglichen angenommen; Altvokabular
+im Bestand führt zu einer Meldung mit allen Befunden, ohne dass etwas
+angewendet wird; das Vokabular steht nur an einer Stelle; die
+Anzeige-Übersetzungen in `js/races.js` haben genau die Schlüssel des Enums.
+
+`check-vokabular.py` parst die Dateien unter `backend/app` und meldet
+Literal-Typen und fest getippte Aufzählungen, die ein Vokabular ein zweites
+Mal beschreiben. Absichtlich kein `grep`: eine Textsuche kann einen
+Kommentar, der das alte Vokabular zitiert, nicht von echtem Code
+unterscheiden - die erste Fassung dieses Tests scheiterte genau daran und
+hätte sich durch Umformatieren beschwichtigen lassen. Im Syntaxbaum tauchen
+Kommentare und Docstrings nicht auf. Ein einzelner Wert bleibt erlaubt
+(`category="wt"` im Scraper ist ein Schreibvorgang, keine Aufzählung).
+
 ### Bekannte Grenze des CSV-Exports (nicht des Backups)
 
 Scheitert die Abfrage eines `/api/export/*.csv`-Endpunkts erst nachdem das
@@ -978,6 +1005,91 @@ Frauen-Radsport, weiter zurückreichende Saisons. Jede Stelle, an der
 dieselbe Sache zweimal beschrieben ist, muss dabei zweimal erweitert
 werden, und die zweite Stelle wird vergessen. Dieser Abschnitt hält fest,
 welche Doppelungen aufgelöst wurden und wie.
+
+### Ein Vokabular für die drei Achsen
+
+Für dieselbe Sache gab es zwei Aufzählungen:
+
+| | Werte | wer schreibt sie |
+|---|---|---|
+| `Team.category` | `wt`, `pro`, `cont` | `scrapers/wikipedia_teams.py`, fest `"wt"` |
+| `RaceRecord.category` | `wt`, `proseries`, `continental` | `db_races.upsert_race_skeleton` |
+
+Dazu die Circuits als dritte Achse, verstreut über `config.py`, den Router,
+den Scraper und `js/races.js`, und `gender` als `Literal["m", "w"]` in
+sieben Dateien neben `app/gender.py`.
+
+Die Folge war nicht theoretisch: `/api/teams?category=pro` nahm den Wert an
+und antwortete zwangsläufig leer, weil keine Zeile ihn enthalten konnte -
+ein Filter, der aussah als funktioniere er. Bei jeder weiteren Datenbank
+hätte man alle Kopien mitpflegen müssen.
+
+Jetzt steht jede Achse einmal:
+
+| Achse | Werte | Modul |
+|---|---|---|
+| `gender` | `m`, `w` | `app/gender.py` (`Gender`, `GENDERS`) |
+| `category` | `wt`, `proseries`, `continental` | `app/taxonomy.py` (`Category`, `CATEGORIES`) |
+| `circuit` | `africa`, `asia`, `europe`, `america`, `oceania` | `app/taxonomy.py` (`Circuit`, `CIRCUITS`) |
+
+Die Laufzeit-Tupel sind per `typing.get_args()` aus den Literal-Typen
+abgeleitet, nicht danebengeschrieben: FastAPI und Pydantic brauchen den Typ,
+Schleifen und Fehlermeldungen brauchen die Werte, und beides kommt aus einer
+Quelle. Sonst stünde das Vokabular auch innerhalb dieser Module zweimal.
+
+Die Achsen sind unabhängig filterbar, mit **einer** Abhängigkeit: `circuit`
+ist ausschließlich bei `category = 'continental'` gesetzt, weil die UCI nur
+die dritte Stufe geografisch gliedert. Diese Regel steht einmal als
+`taxonomy.kategorie_braucht_circuit()`, wird von `pruefe_achsen()` in beide
+Richtungen geprüft (vorher fehlte die zweite: ein `circuit` bei
+`category='wt'` lief durch und wäre als Teil der Renn-ID in der Datenbank
+gelandet - eine ID, die kein zweiter Lauf reproduziert) und ist als
+`CHECK ((category = 'continental') = (circuit IS NOT NULL))` in Migration
+0003 auch in der Datenbank durchgesetzt.
+
+Aus derselben Quelle kommt jetzt auch die Seeding-Liste des Schedulers:
+`taxonomy.achsen_kombinationen()` statt der fest getippten Paare in
+`scheduler._race_history_series()`. Eine vierte Kategorie hätte man vorher
+an zwei Stellen nachtragen müssen - und beim Vergessen der zweiten wäre sie
+stillschweigend nie geseedet worden.
+
+**Keine Datenmigration.** Gewählt wurde `wt`/`proseries`/`continental`, weil
+das in der Datenbank steht. Belegt über den Schreibpfad, der alle Zeilen
+abdeckt statt einer Stichprobe: `races.category` schreibt ausschließlich
+`db_races.upsert_race_skeleton`, aufgerufen aus der einen Schleife in
+`refresh_race_history()`, und die geht genau über diese drei Werte;
+`teams.category` schreibt nur `scrapers/wikipedia_teams.py`, fest auf
+`"wt"`. `pro`/`cont` war damit totes Vokabular. Das ist wichtig, weil es für
+diese Datenbank kein automatisches Backup gibt (siehe
+"Geschlechts-Dimension"): Migration 0003 setzt nur CHECK-Constraints und
+schreibt keinen Wert um. Enthielte der Bestand trotzdem Altvokabular, würde
+sie **alle** Befunde in einer Meldung nennen und abbrechen, ohne etwas
+angewendet zu haben - nicht beim ersten stehenbleiben.
+
+#### `/api/teams?category=` nimmt nur noch `wt`
+
+Der Parameter ist auf `taxonomy.TeamCategory` getippt, und das ist derzeit
+nur `wt` - nicht weil die Kategorie-Achse kleiner wäre, sondern weil die
+`teams`-Tabelle nichts anderes enthalten kann: die Quelle
+(Wikipedia-Artikel "UCI World Tour") listet ausschließlich WorldTeams. Ein
+angenommener Wert, auf den nie eine Zeile passt, ist schlechter als ein
+abgelehnter: `?category=pro` liefert jetzt 422 statt einer leeren Liste.
+
+Kommen ProTeams oder Continental-Teams dazu, gehört der Wert in
+`TeamCategory` **und** in den Scraper. Steht er nur in `TeamCategory`,
+entsteht derselbe Filter wieder; der Kommentar an `TeamCategory` sagt das,
+und `scripts/check-vokabular.py` erzwingt zumindest, dass er nur an dieser
+einen Stelle steht.
+
+Recherchestand dazu (2026-09-14): die Wikipedia-Seiten
+`List of {Jahr} UCI ProTeams and Continental teams` existieren - per
+Websuche für 2020, 2021, 2022 und 2026 bestätigt. Ihr **Tabellenaufbau**
+ist ungeprüft: Wikipedia ist aus dieser Arbeitsumgebung durch den
+Egress-Proxy gesperrt (403), ein Abruf war nicht möglich. Der konkrete
+nächste Schritt ist damit: Seite abrufen, Spaltenaufbau mit dem von
+`scrapers/wikipedia_teams.py` erwarteten vergleichen, dann Scraper und
+`TeamCategory` gemeinsam erweitern. Bis dahin bleibt der Filter bei `wt`,
+statt Werte anzunehmen, für die es keine Zeilen gibt.
 
 ### Renn-Daten: ein Pfad statt zwei
 
@@ -1626,10 +1738,10 @@ kennt, bekommt genau das, was es vor der Geschlechts-Dimension gab (siehe
 `gender`. Die Detail-Endpunkte haben den Parameter nicht: dort steckt das
 Geschlecht schon in der ID.
 
-`category` bei `/api/teams` akzeptiert nur `wt`: die Quelle
-(Wikipedia-Artikel "UCI World Tour") listet ausschließlich WorldTeams.
-Vorher nahm der Parameter zusätzlich `pro` und `cont` an und lieferte dafür
-immer eine leere Liste - ein Filter, der aussah als funktioniere er.
+`category` bei `/api/teams` akzeptiert nur `wt` (`taxonomy.TeamCategory`);
+jeder andere Wert ergibt 422. Vorher nahm der Parameter zusätzlich `pro` und
+`cont` an und lieferte dafür immer eine leere Liste - warum, und was beim
+Erweitern dazugehört, steht unter "Ein Vokabular für die drei Achsen".
 
 **Entfallen:** `GET /api/races`, `GET /api/calendar` und
 `GET /api/results`. Sie bedienten einen zweiten Renn-Datenpfad aus dem

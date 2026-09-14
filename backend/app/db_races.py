@@ -34,6 +34,7 @@ from .db import _connect, stream_query
 from .models import RaceRecord, RaceResultEntry, RaceStage
 from .gender import GENDER_DEFAULT, gender_prefix
 from .race_meta import is_grand_tour
+from .taxonomy import pruefe_achsen
 from .text import slugify
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,12 @@ def upsert_race_skeleton(
     `gender` geht in die ID ein und in die Spalte: ohne das hätte ein
     Frauen-Rennen das gleichnamige Männer-Rennen per ON CONFLICT (id)
     überschrieben (Befund 7)."""
+    # Vor dem Bilden der ID, nicht danach: Kategorie und Circuit gehen in
+    # den Primärschlüssel ein, und eine ID aus einer unmöglichen
+    # Kombination (etwa category='wt' MIT circuit) würde von keinem
+    # zweiten Lauf reproduziert - der nächste Lauf legte eine zweite Zeile
+    # an statt die erste zu aktualisieren.
+    pruefe_achsen(category, circuit)
     race_id = race_id_for(season, category, name, circuit, gender)
     with _connect() as conn:
         conn.execute(
