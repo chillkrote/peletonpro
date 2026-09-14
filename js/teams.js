@@ -5,7 +5,7 @@
 // wird erst beim ersten Klick geladen, damit ein Seitenaufruf ohne
 // Fahrer-Interesse nicht unnötig ~500 Datensätze lädt.
 import { Api, escapeHtml, safeUrl } from './api.js';
-import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { apiGender, renderComingSoonIfWomen, renderNav } from './nav.js';
 import { initRidersTab } from './riders.js';
 import { errorPanel, loadingPanel, starten, statePanel, teamInitials } from './ui.js';
 
@@ -14,13 +14,16 @@ starten(async () => {
 
     const teamsContent = document.getElementById('teams-content');
     const ridersContent = document.getElementById('riders-content');
-    if (renderComingSoonIfWomen(teamsContent)) return;
+    if (await renderComingSoonIfWomen(teamsContent, async () => {
+        const res = await Api.getTeams(null, apiGender());
+        return !(res.teams || []).length;
+    })) return;
 
     initTabs(teamsContent, ridersContent);
 
     teamsContent.innerHTML = loadingPanel('Lade Teams…');
     try {
-        const { teams } = await Api.getTeams();
+        const { teams } = await Api.getTeams(null, apiGender());
         renderTeams(teamsContent, teams || []);
     } catch (err) {
         console.error('Fehler beim Laden der Teams:', err);

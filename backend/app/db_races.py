@@ -32,6 +32,7 @@ from typing import Optional
 
 from .db import _connect, stream_query
 from .models import RaceRecord, RaceResultEntry, RaceStage
+from .gender import GENDER_DEFAULT, gender_prefix
 from .race_meta import is_grand_tour
 from .text import slugify
 
@@ -39,15 +40,29 @@ logger = logging.getLogger(__name__)
 
 
 
-def race_id_for(season: int, category: str, name: str, circuit: Optional[str] = None) -> str:
-    """Eindeutige ID über alle Kategorien/Jahre hinweg - Saison und Kategorie
-    (bei Continental zusätzlich der Circuit) sind Teil der ID, damit
-    gleichnamige Rennen in verschiedenen Jahren/Serien nicht kollidieren."""
+def race_id_for(
+    season: int,
+    category: str,
+    name: str,
+    circuit: Optional[str] = None,
+    gender: str = GENDER_DEFAULT,
+) -> str:
+    """Eindeutige ID über Kategorien, Jahre und Geschlechter hinweg.
+
+    Saison und Kategorie (bei Continental zusätzlich der Circuit) sind Teil
+    der ID, damit gleichnamige Rennen in verschiedenen Jahren/Serien nicht
+    kollidieren. Seit Befund 7 gilt dasselbe für das Geschlecht: die Ronde
+    van Vlaanderen der Frauen und die der Männer sind zwei Rennen, hätten
+    aber dieselbe ID bekommen - und das zweite hätte das erste per
+    ON CONFLICT (id) DO UPDATE überschrieben.
+
+    `gender="m"` erzeugt weiterhin EXAKT die bisherigen IDs; nur Frauen
+    bekommen ein Präfix. Begründung in app/gender.py."""
     parts = [str(season), category]
     if circuit:
         parts.append(circuit)
     parts.append(slugify(name))
-    return "-".join(parts)
+    return gender_prefix(gender) + "-".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -87,16 +102,21 @@ def upsert_race_skeleton(
     end_date: Optional[str],
     wiki_url: Optional[str],
     circuit: Optional[str] = None,
+    gender: str = GENDER_DEFAULT,
 ) -> str:
     """Legt eine Rennen-Grundzeile an bzw. aktualisiert Name/Zeitraum, falls
     sie schon existiert - rührt `results_fetched_at`/Details NICHT an (siehe
-    replace_race_details für die teure zweite Phase)."""
-    race_id = race_id_for(season, category, name, circuit)
+    replace_race_details für die teure zweite Phase).
+
+    `gender` geht in die ID ein und in die Spalte: ohne das hätte ein
+    Frauen-Rennen das gleichnamige Männer-Rennen per ON CONFLICT (id)
+    überschrieben (Befund 7)."""
+    race_id = race_id_for(season, category, name, circuit, gender)
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO races (id, name, season, category, circuit, start_date, end_date, wiki_url, last_updated)
-            VALUES (%(id)s, %(name)s, %(season)s, %(category)s, %(circuit)s, %(start_date)s, %(end_date)s, %(wiki_url)s, now())
+            INSERT INTO races (id, name, season, category, circuit, gender, start_date, end_date, wiki_url, last_updated)
+            VALUES (%(id)s, %(name)s, %(season)s, %(category)s, %(circuit)s, %(gender)s, %(start_date)s, %(end_date)s, %(wiki_url)s, now())
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 start_date = EXCLUDED.start_date,
@@ -110,6 +130,7 @@ def upsert_race_skeleton(
                 "season": season,
                 "category": category,
                 "circuit": circuit,
+                "gender": gender,
                 "start_date": start_date,
                 "end_date": end_date,
                 "wiki_url": wiki_url,
@@ -207,13 +228,20 @@ def replace_race_details(
 
 
 def _race_filter(
-    season: Optional[int], category: Optional[str], circuit: Optional[str]
+    season: Optional[int],
+    category: Optional[str],
+    circuit: Optional[str],
+    gender: str = GENDER_DEFAULT,
 ) -> tuple[str, list]:
     """Baut die WHERE-Klausel für Liste und Zählung. Eine Stelle statt zwei:
     sonst driften Filter und Gesamtzahl auseinander, sobald eine neue Achse
-    dazukommt (etwa `gender` für den Frauen-Radsport)."""
-    clause = ""
-    params: list = []
+    dazukommt - genau das ist mit `gender` jetzt passiert, und dank dieser
+    Funktion an einer Stelle.
+
+    `gender` hat einen Default, ist aber nicht optional gedacht: ohne den
+    Filter mischt der Kalender Männer- und Frauen-Rennen."""
+    clause = " AND gender = %s"
+    params: list = [gender]
     if season is not None:
         clause += " AND season = %s"
         params.append(season)
@@ -232,13 +260,15 @@ def get_races(
     circuit: Optional[str] = None,
     limit: int = 200,
     offset: int = 0,
+    gender: str = GENDER_DEFAULT,
 ) -> list[RaceRecord]:
     """Leichtgewichtige Liste (ohne results/stages) - für die Detailansicht
     siehe get_race()."""
-    clause, params = _race_filter(season, category, circuit)
+    clause, params = _race_filter(season, category, circuit, gender)
     query = f"""
         SELECT id, name, season, category, circuit, start_date, end_date,
-               num_stages, distance_km, elevation_m, wiki_url, organizer_website, results_fetched_at
+               num_stages, distance_km, elevation_m, wiki_url, organizer_website,
+               results_fetched_at, gender
         FROM races
         WHERE 1=1{clause}
         ORDER BY start_date NULLS LAST, name LIMIT %s OFFSET %s
@@ -252,10 +282,11 @@ def count_races(
     season: Optional[int] = None,
     category: Optional[str] = None,
     circuit: Optional[str] = None,
+    gender: str = GENDER_DEFAULT,
 ) -> int:
     """Gesamtzahl für dieselben Filter wie get_races - damit das Frontend
     paginieren kann, ohne alles laden zu müssen."""
-    clause, params = _race_filter(season, category, circuit)
+    clause, params = _race_filter(season, category, circuit, gender)
     with _connect() as conn:
         row = conn.execute(
             f"SELECT count(*) AS n FROM races WHERE 1=1{clause}", params
@@ -263,13 +294,18 @@ def count_races(
     return row["n"] if row else 0
 
 
-def get_seasons() -> list[int]:
+def get_seasons(gender: str = GENDER_DEFAULT) -> list[int]:
     """Alle Saisons, für die Rennen vorliegen - absteigend. Leichter Endpunkt
     für die Saison-Tabs im Frontend, das sie sonst aus der kompletten
-    Renn-Liste ableiten müsste (und die dafür komplett laden)."""
+    Renn-Liste ableiten müsste (und die dafür komplett laden).
+
+    Nach gender gefiltert: die Frauen-WorldTour hat andere Saisons im
+    Bestand als die der Männer, und Tabs für Jahre ohne Rennen wären eine
+    Einladung in eine leere Liste."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT season FROM races ORDER BY season DESC"
+            "SELECT DISTINCT season FROM races WHERE gender = %s ORDER BY season DESC",
+            (gender,),
         ).fetchall()
     return [r["season"] for r in rows]
 
@@ -289,6 +325,7 @@ def _row_to_race(row: dict) -> RaceRecord:
         wiki_url=row["wiki_url"],
         is_grand_tour=is_grand_tour(row["name"]),
         organizer_website=row.get("organizer_website"),
+        gender=row.get("gender", GENDER_DEFAULT),
         results_fetched_at=row["results_fetched_at"].isoformat() if row.get("results_fetched_at") else None,
     )
 
@@ -298,7 +335,8 @@ def get_race(race_id: str) -> Optional[RaceRecord]:
         row = conn.execute(
             """
             SELECT id, name, season, category, circuit, start_date, end_date,
-                   num_stages, distance_km, elevation_m, wiki_url, organizer_website, results_fetched_at
+                   num_stages, distance_km, elevation_m, wiki_url, organizer_website,
+                   results_fetched_at, gender
             FROM races WHERE id = %s
             """,
             (race_id,),
@@ -472,11 +510,11 @@ def get_team_season_wins(team_name: str, season: int, limit: int = 50) -> list[d
 def export_races():
     return stream_query(
         """
-        SELECT id, name, season, category, circuit, start_date, end_date,
+        SELECT id, name, season, category, circuit, gender, start_date, end_date,
                num_stages, distance_km, elevation_m, wiki_url, organizer_website,
                results_fetched_at, last_updated
         FROM races
-        ORDER BY season, category, circuit NULLS FIRST, name
+        ORDER BY gender, season, category, circuit NULLS FIRST, name
         """
     )
 

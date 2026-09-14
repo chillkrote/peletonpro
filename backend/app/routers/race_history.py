@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from .. import db, db_races
+from ..gender import GENDER_DEFAULT
 from ..ratelimit import RATE_LIMIT_RACE_DETAIL, limiter
 from .messages import DB_UNAVAILABLE, RACES_NOT_CONFIGURED
 
@@ -24,6 +25,7 @@ def list_races(
     season: Optional[int] = None,
     category: Optional[Literal["wt", "proseries", "continental"]] = None,
     circuit: Optional[Literal["africa", "asia", "europe", "america", "oceania"]] = None,
+    gender: Literal["m", "w"] = GENDER_DEFAULT,
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),
 ):
@@ -31,43 +33,53 @@ def list_races(
     GET /api/race-history/{id}.
 
     `total` nennt die Gesamtzahl für dieselben Filter, damit das Frontend
-    paginieren kann, ohne alles laden zu müssen."""
+    paginieren kann, ohne alles laden zu müssen.
+
+    `gender` hat den Default 'm': der ganze Bestand ist Männer-Radsport,
+    und ein Aufrufer, der den Parameter nicht kennt, bekommt damit genau
+    das, was er vorher bekam (siehe backend/README.md,
+    "Geschlechts-Dimension")."""
     if not db.is_configured():
         return {"races": [], "total": 0, "limit": limit, "offset": offset,
-                "error": RACES_NOT_CONFIGURED}
+                "gender": gender, "error": RACES_NOT_CONFIGURED}
     try:
         races = db_races.get_races(
-            season=season, category=category, circuit=circuit, limit=limit, offset=offset
+            season=season, category=category, circuit=circuit,
+            limit=limit, offset=offset, gender=gender,
         )
-        total = db_races.count_races(season=season, category=category, circuit=circuit)
+        total = db_races.count_races(
+            season=season, category=category, circuit=circuit, gender=gender
+        )
         return {
             "races": [r.model_dump() for r in races],
             "total": total,
             "limit": limit,
             "offset": offset,
+            "gender": gender,
             "error": None,
         }
     except Exception:  # noqa: BLE001 - DB kann z.B. zeitig ablaufen (Free-Tier)
         logger.exception("Renn-Historie-Abfrage fehlgeschlagen")
         return {"races": [], "total": 0, "limit": limit, "offset": offset,
-                "error": DB_UNAVAILABLE}
+                "gender": gender, "error": DB_UNAVAILABLE}
 
 
 # ACHTUNG Reihenfolge: diese Route muss VOR "/{race_id}" stehen. FastAPI
 # probiert die Routen in Deklarationsreihenfolge, sonst würde "seasons" als
 # race_id durchgehen und ein 404 liefern.
 @router.get("/seasons")
-def list_seasons():
+def list_seasons(gender: Literal["m", "w"] = GENDER_DEFAULT):
     """Nur die Saisons, für die Rennen vorliegen - für die Saison-Tabs.
     Vorher leitete das Frontend sie aus der kompletten Renn-Liste ab und
     musste dafür alle Saisons auf einmal laden."""
     if not db.is_configured():
-        return {"seasons": [], "error": RACES_NOT_CONFIGURED}
+        return {"seasons": [], "gender": gender, "error": RACES_NOT_CONFIGURED}
     try:
-        return {"seasons": db_races.get_seasons(), "error": None}
+        return {"seasons": db_races.get_seasons(gender=gender), "gender": gender,
+                "error": None}
     except Exception:  # noqa: BLE001
         logger.exception("Saison-Abfrage fehlgeschlagen")
-        return {"seasons": [], "error": DB_UNAVAILABLE}
+        return {"seasons": [], "gender": gender, "error": DB_UNAVAILABLE}
 
 
 @router.get("/{race_id}")

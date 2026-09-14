@@ -4,7 +4,7 @@
 // Rennergebnissen, sowie den aktuellen Kader aus der Fahrer-Datenbank
 // (js/riders.js: renderTeamRoster) mit Link auf jedes Fahrerprofil.
 import { Api, escapeHtml, safeUrl } from './api.js';
-import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { apiGender, renderComingSoonIfWomen, renderNav } from './nav.js';
 import { renderTeamRoster } from './riders.js';
 import { errorPanel, formatCalendarDate, loadingPanel, starten, teamInitials } from './ui.js';
 
@@ -12,7 +12,13 @@ starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Team' }] });
 
     const content = document.getElementById('team-content');
-    if (renderComingSoonIfWomen(content)) return;
+    // Detailseite: geprüft wird, ob es für die Auswahl überhaupt Teams
+    // gibt - eine Team-ID der Frauen trägt das Präfix "w--" und wäre für
+    // "Männer" ohnehin nicht auffindbar.
+    if (await renderComingSoonIfWomen(content, async () => {
+        const res = await Api.getTeams(null, apiGender());
+        return !(res.teams || []).length;
+    })) return;
 
     const teamId = new URLSearchParams(window.location.search).get('id');
     if (!teamId) {

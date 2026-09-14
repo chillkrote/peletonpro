@@ -25,6 +25,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import Team
+from ..gender import GENDER_DEFAULT, gender_prefix
 from ..text import slugify
 from .wikipedia import fetch_page_images, fetch_section, wiki_title_from_url
 
@@ -44,6 +45,17 @@ def _country_from_cell(cell) -> str:
     return re.sub(r"\s*\(\d{4}.*?\)\s*$", "", text).strip()
 
 
+def team_id_for(name: str, gender: str = GENDER_DEFAULT) -> str:
+    """ID eines Teams. Wie bei den Fahrern trennt das Geschlecht die
+    gleichnamigen Männer- und Frauen-Ableger eines Teams - "Team
+    Visma-Lease a Bike" gibt es zweimal, und Wikipedia unterscheidet die
+    Artikel entsprechend ("(men's team)" / "(women's team)"). Ohne das
+    Präfix hätte das Frauen-Team das Männer-Team überschrieben.
+
+    Männer-IDs bleiben unverändert, siehe app/gender.py."""
+    return gender_prefix(gender) + slugify(name)
+
+
 def _parse_team_row(row) -> Team | None:
     cells = row.find_all("td")
     if len(cells) < 2:
@@ -60,11 +72,14 @@ def _parse_team_row(row) -> Team | None:
     country = _country_from_cell(cells[1])
 
     return Team(
-        id=slugify(name),
+        id=team_id_for(name),
         name=name,
         category="wt",
         country=country or "?",
+        # Kürzel aus dem Namens-Slug, NICHT aus der ID: das Präfix einer
+        # Frauen-ID würde sonst jedes Kürzel zu "W--" machen.
         code=slugify(name)[:3].upper(),
+        gender=GENDER_DEFAULT,
         source_url=f"https://en.wikipedia.org/wiki/{wiki_title}",
     )
 

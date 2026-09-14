@@ -718,6 +718,197 @@ Zeilenzahlen im Manifest gegen die Datenbank. Ein abgeschnittener Dump
 fällt dort auf. Wer die CSV-Endpunkte für ein Backup benutzt, sollte die
 Zeilenzahlen selbst gegenprüfen.
 
+## Geschlechts-Dimension
+
+Weder `races` noch `riders` noch `teams` hatten eine Spalte für Geschlecht,
+und die Primärschlüssel entstanden allein aus Name, Saison und Kategorie.
+Gegen den echten Code ausgeführt:
+
+```
+race_id_for(2026, 'wt', 'Ronde van Vlaanderen')  ->  2026-wt-ronde-van-vlaanderen
+                                                     identisch für M und W
+rider_id_for('Simon Yates')                      ->  simon-yates
+                                                     jede zweite Person gleichen
+                                                     Namens in derselben Zeile
+```
+
+Das Frauen-Rennen hätte das Männer-Rennen per `ON CONFLICT (id) DO UPDATE`
+stillschweigend überschrieben statt daneben zu existieren. Migration
+`0002_gender.sql` und `app/gender.py` beheben das.
+
+### Die ID-Regel: "w--" als Präfix
+
+Männer-IDs bleiben **unverändert**, Frauen-IDs bekommen das Präfix `w--`:
+
+| | Männer | Frauen |
+|---|---|---|
+| Rennen | `2026-wt-ronde-van-vlaanderen` | `w--2026-wt-ronde-van-vlaanderen` |
+| Fahrer | `simon-yates` | `w--simon-yates` |
+| Team | `sd-worx-protime` | `w--sd-worx-protime` |
+
+Damit ist **keine Datenmigration nötig**: jede der ~2.000 Renn-Zeilen, 517
+Fahrer-Zeilen und 18 Team-Zeilen behält ihren Primärschlüssel, und kein
+Fremdschlüssel muss nachgezogen werden. Der Preis ist eine Asymmetrie -
+"m" ist implizit.
+
+Das ist die bewusste Wahl gegenüber der Alternative, die bestehenden IDs
+mit umzubenennen. Der Grund ist nicht Bequemlichkeit: es gibt für diese
+Datenbank kein automatisches Backup (Renders Cron Jobs sind
+kostenpflichtig, und das Projekt soll vorerst kostenlos bleiben), und ein
+Umschreiben von Primärschlüsseln über fünf Tabellen ohne Netz ist genau
+die Migration, die man nicht fährt.
+
+**Warum genau zwei Bindestriche.** `text.slugify` zieht Zeichenfolgen zu
+einem *einzelnen* `-` zusammen und schneidet Ränder ab. Kein Slug enthält
+also `--`. Nachgemessen über 50.000 Zufallsfolgen aus einem Alphabet mit
+Leerzeichen, Strichen aller Art, Apostrophen und Satzzeichen: null
+Verstösse. Daraus folgt, dass eine ID mit `--` eindeutig eine Frauen-ID ist
+und keine Bestands-ID eine sein kann.
+
+Ein einfaches `w-` wäre **nicht** sicher gewesen: `slugify("W Smith")`
+ergibt `w-smith`, und das ist ein gültiger Männer-Slug. Mit `w-` als
+Präfix hätte eine Fahrerin "Smith" mit einem Fahrer "W Smith" kollidiert -
+also genau der Fehler, den diese Änderung behebt.
+
+Belegt gegen den Code aus `origin/main`: 22 IDs (Rennen mit und ohne
+Circuit, Fahrernamen mit Umlauten/Akzenten/Bindestrichen, Teamnamen)
+erzeugen mit `gender='m'` zeichengleich die alten IDs, und die Schnittmenge
+zwischen allen Männer- und allen Frauen-IDs ist leer.
+
+### Was in der Datenbank steht
+
+`gender CHAR(1) NOT NULL DEFAULT 'm'` mit `CHECK (gender IN ('m','w'))` auf
+`races`, `riders` und `teams`. `CHAR(1)` mit CHECK statt eines Enum-Typs:
+`ALTER TYPE ... ADD VALUE` ist in Postgres nicht transaktional
+zurücknehmbar, und ein CHECK lässt sich in einer gewöhnlichen Migration
+ändern.
+
+Default `'m'` für den Bestand, weil alles Gespeicherte Männer-Radsport ist -
+die Scraper lesen ausschliesslich Männer-Quellen
+(`scrapers/wikipedia_teams.WORLDTEAMS_PAGE`,
+`scrapers/wikipedia_race_history.season_page_titles`).
+
+Dazu zusammengesetzte Indizes in der Spaltenreihenfolge der Abfragen
+(`(gender, season, category)` für Rennen, `(gender, last_name, first_name)`
+und `(gender, current_team_id)` für Fahrer, `(gender, name)` für Teams) -
+ein Index nur auf `gender` würde bei zwei Werten kaum aussortieren.
+
+### API
+
+`gender` ist Filterparameter **und** Antwortfeld bei `/api/riders`,
+`/api/teams`, `/api/race-history` und `/api/race-history/seasons`. Der
+Default ist `'m'`: wer den Parameter nicht kennt, bekommt genau das, was es
+vorher gab. Nachgemessen - 36 Endpunkte gegen den Stand davor: 19 byteweise
+unverändert, 15 nur um `gender` (bzw. `wikidata_qid`) ergänzt, 0
+unerwartete Abweichungen.
+
+`gender=x` wird mit HTTP 422 abgewiesen (`Literal["m","w"]`).
+
+Die Detail-Endpunkte (`/api/teams/{id}`, `/api/riders/{id}`,
+`/api/race-history/{id}`) haben **keinen** `gender`-Parameter: das
+Geschlecht steckt schon in der ID.
+
+### Frontend
+
+Der Umschalter in `js/nav.js` gab es schon; er zeigte nur einen
+"kommt bald"-Platzhalter. Jetzt gibt `nav.apiGender()` den Wert an jeden
+Listen-Aufruf weiter, und der Platzhalter entscheidet sich an der
+**Antwort**:
+
+```js
+if (await renderComingSoonIfWomen(content, async () => {
+    const res = await Api.getTeams(null, apiGender());
+    return !(res.teams || []).length;
+})) return;
+```
+
+Vorher hing er allein am Umschalter (`if (isWomen()) return true;`). Damit
+hätte er auch dann noch gestanden, wenn längst Frauen-Daten in der
+Datenbank liegen - und jemand hätte den Aufruf in sechs Seiten-Modulen
+entfernen müssen, um das zu merken. Sobald der Frauen-Import Zeilen
+schreibt, verschwindet der Platzhalter von selbst, ohne Code-Änderung.
+
+Ein Fehler beim Abruf gilt dabei **nicht** als "keine Frauen-Daten" - die
+Seite geht dann ihren eigenen Fehlerpfad, statt "kommt bald" zu behaupten,
+wenn das Backend schlicht nicht erreichbar ist.
+
+`news.html` bleibt beim reinen Platzhalter: der RSS-Auszug ist allgemeine
+Radsport-Presse und kennt die Dimension nicht.
+
+Im Browser nachgemessen (Chromium, `scripts/check-pages.mjs` plus eigene
+Läufe): ohne Frauen-Daten zeigen alle vier geschlechtsabhängigen Seiten den
+Platzhalter und senden `gender=w` an die API; mit zwei Frauen-Teams, zwei
+Fahrerinnen und zwei Frauen-Rennen in der Datenbank verschwindet er, die
+Seiten rendern, der Männer-Kalender zeigt keine Frauen-Rennen und
+umgekehrt. Keine JavaScript-Fehler.
+
+### Stabile Fahrer-IDs: der Plan
+
+Der Namens-Slug ist von Natur aus nicht eindeutig. Das Geschlecht nimmt
+einen Teil des Problems weg, aber nicht alles: zwei Fahrerinnen gleichen
+Namens kollidieren weiter.
+
+Die Lösung ist ein Schlüssel aus der Wikidata-QID. Migration 0002 legt
+`riders.wikidata_qid` samt partiellem UNIQUE-Index an; die Infrastruktur
+zum Füllen steht (`scrapers/wikipedia.py::fetch_wikidata_ids` holt QIDs
+gebatcht, bis 50 Titel pro Request, und `scrapers/wikidata.py` nutzt sie
+schon für die Strava-Profile).
+
+Der Wechsel des Primärschlüssels ist **absichtlich nicht Teil dieses
+Schritts**. Er schreibt `riders.id` und die Fremdschlüssel in
+`rider_team_stints` und `rider_season_points` um, und ohne Backup ist das
+nicht zu verantworten. Die Reihenfolge, wenn es soweit ist:
+
+1. QIDs für alle Fahrer füllen (Job-Lauf, rein additiv, kein Risiko) und
+   prüfen, für wie viele keine QID zu finden ist - für die braucht es die
+   Wikipedia-URL als Ersatzschlüssel.
+2. Vorher ein Dump: `cd backend && python -m app.backup dump` gegen die
+   External Database URL, von einem Rechner mit `pg_dump`. Kostet nichts
+   und ist der einzige Rückweg.
+3. Migration, die `riders.id` auf die QID umstellt. `rider_team_stints` und
+   `rider_season_points` brauchen dafür `ON UPDATE CASCADE` auf ihrem
+   Fremdschlüssel - haben sie heute nicht, nur `ON DELETE CASCADE`. Das
+   muss dieselbe Migration mitbringen, sonst bleiben die Kinder auf der
+   alten ID sitzen.
+4. `race_results` ist **nicht** betroffen: dort steht `rider_name` als
+   Text, keine `rider_id`. Das zu verknüpfen ist Befund 8 und ein eigener
+   Schritt.
+
+### Was der Frauen-Import anzufassen hat
+
+Nach diesem Schritt ist der Frauen-Radsport eine Frage von
+Scraper-Ergänzungen, nicht mehr von Schema-Arbeit. Die Stellen:
+
+| Datei | Was |
+|---|---|
+| `scrapers/wikipedia_teams.py` | `WORLDTEAMS_PAGE`/`WORLDTEAMS_SECTION` zeigen auf den Artikel "UCI World Tour". Die Frauen haben eigene Seiten ("UCI Women's WorldTour", Abschnitt mit den WorldTeams). `team_id_for(name, 'w')` und `gender='w'` mitgeben. |
+| `scrapers/wikipedia_race_history.py` | `season_page_titles()` baut Titel wie `"{Jahr} UCI World Tour"`. Frauen: `"{Jahr} UCI Women's World Tour"`. Die Tabellenstruktur dort ist **nicht geprüft** - das ist die eigentliche Recherche-Arbeit dieses nächsten Schritts. |
+| `scrapers/wikipedia_riders.py` | `roster_riders_for_team(team)` liest den Kader-Abschnitt des Team-Artikels; bei Frauen-Teams heisst der Abschnitt möglicherweise anders. `rider_id_for(name, 'w')` und `gender='w'`. |
+| `app/scheduler.py` | `refresh_teams`/`refresh_rosters`/`refresh_race_history` laufen heute je einmal für Männer. Entweder eine Schleife über `('m','w')` oder eigene Jobs - und dann das Zeitbudget prüfen, das sich auf einen Durchlauf bezieht (siehe "Zeitbudget statt fester Batch-Größe"). |
+| `app/race_meta.py` | Die Grand-Tour- und Monument-Slugs der Frauen stehen dort **schon** drin (Tour de France Femmes, Giro d'Italia Women, La Vuelta Femenina, die Frauen-Monumente). Nichts zu tun, ausser die echten `races.name`-Werte gegenzuprüfen. |
+| `app/config.py` | `RACE_HISTORY_CIRCUITS`/`RACE_HISTORY_START_YEAR` gelten für beide; prüfen, ab welchem Jahr die Frauen-Saisonseiten brauchbar sind. |
+
+Nicht anzufassen: Schema, IDs, API-Parameter, Frontend - das ist mit
+diesem Schritt erledigt.
+
+### Prüfen
+
+```bash
+PGPORT=5599 ./scripts/check-migration-0002.sh
+```
+
+Sechzehn Prüfungen: Zeilenzahlen unverändert, jede Spalte ausser `gender`
+unverändert (Prüfsumme über eine ausdrückliche Spaltenliste, dieselbe
+Datenbank vor und nach der Migration), Bestand überall `gender='m'`, keine
+verwaiste Fremdschlüssel-Referenz über alle sieben Beziehungen, ein
+Männer- und ein Frauen-Rennen gleichen Namens in derselben Saison ergeben
+zwei Zeilen, und `gender='x'` wird vom CHECK abgelehnt.
+
+Verglichen wird **dieselbe** Datenbank vor und nach der Migration, nicht
+zwei getrennt geseedete: `last_updated`/`seeded_at` stehen auf `now()` und
+weichen dann ab, ohne dass die Migration daran schuld ist. Genau darauf
+ist der erste Versuch hereingefallen.
+
 ## Datenbank-Zugriff: Verbindungs-Pool
 
 Alle Zugriffe in `app/db.py` und `app/db_races.py` laufen über einen
@@ -1418,16 +1609,22 @@ cd backend && python -m app.backup dump --keep 2 && \
 
 | Endpunkt | Beschreibung |
 |---|---|
-| `GET /api/teams?category=wt` | Alle Teams aus der `teams`-Tabelle, optional gefiltert |
+| `GET /api/teams?category=wt&gender=m\|w` | Alle Teams aus der `teams`-Tabelle, optional gefiltert |
 | `GET /api/teams/{id}` | Ein Team |
 | `GET /api/teams/{id}/stats?season=` | Siege, Podestplätze und Top-10-Platzierungen des Teams in einer Saison, plus die Liste der Siege |
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
-| `GET /api/riders?team=<team_id>&limit=&offset=` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
+| `GET /api/riders?team=<team_id>&gender=m\|w&limit=&offset=` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
 | `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (rohe Team-Zeiträume) und `seasons` (pro Saison abgeleiteter Team-Link, siehe "Vor-/Nachname, Saison-Team-Links, Strava-Profile" oben) |
-| `GET /api/race-history?season=&category=wt\|proseries\|continental&circuit=africa\|asia\|europe\|america\|oceania&limit=&offset=` | Renn-Historie seit 2020, gefiltert/paginiert, ohne Ergebnisse/Etappen (siehe "Renn-Historie" oben) |
-| `GET /api/race-history/seasons` | Alle Saisons, für die Rennen vorliegen |
+| `GET /api/race-history?season=&category=wt\|proseries\|continental&circuit=africa\|asia\|europe\|america\|oceania&gender=m\|w&limit=&offset=` | Renn-Historie seit 2020, gefiltert/paginiert, ohne Ergebnisse/Etappen (siehe "Renn-Historie" oben) |
+| `GET /api/race-history/seasons?gender=m\|w` | Alle Saisons, für die Rennen vorliegen |
 | `GET /api/race-history/{id}` | Ein Rennen inkl. `results` (Top 10+) und bei Mehretagenrennen `stages[]` (je Etappe eigene `results`) |
 | `GET /api/health` | Health-Check (nicht gedrosselt) |
+
+`gender` akzeptiert `m` oder `w`, Default `m` - wer den Parameter nicht
+kennt, bekommt genau das, was es vor der Geschlechts-Dimension gab (siehe
+"Geschlechts-Dimension"). Jede Antwort führt den verwendeten Wert als Feld
+`gender`. Die Detail-Endpunkte haben den Parameter nicht: dort steckt das
+Geschlecht schon in der ID.
 
 `category` bei `/api/teams` akzeptiert nur `wt`: die Quelle
 (Wikipedia-Artikel "UCI World Tour") listet ausschließlich WorldTeams.

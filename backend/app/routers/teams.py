@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from .. import db, db_races
 from ..config import RACE_SEASON_YEAR
+from ..gender import GENDER_DEFAULT
 from ..ratelimit import RATE_LIMIT_TEAM_STATS, limiter
 from .messages import DB_UNAVAILABLE, RIDERS_NOT_CONFIGURED
 
@@ -14,7 +15,10 @@ router = APIRouter(prefix="/api/teams", tags=["teams"])
 
 
 @router.get("")
-def list_teams(category: Optional[Literal["wt"]] = None):
+def list_teams(
+    category: Optional[Literal["wt"]] = None,
+    gender: Literal["m", "w"] = GENDER_DEFAULT,
+):
     """Die aktuellen WorldTeams - aus der Datenbank.
 
     Vorher aus app/cache.py, also aus einer JSON-Datei neben derselben
@@ -22,6 +26,11 @@ def list_teams(category: Optional[Literal["wt"]] = None):
     verschwinden damit: die Liste kann nicht mehr von /api/teams/{id}/stats
     abweichen, und sie ist nach einem Deploy auf Renders Free-Plan nicht
     mehr leer.
+
+    `gender` hat den Default 'm': der ganze Bestand ist Männer-Radsport,
+    und ein Aufrufer, der den Parameter nicht kennt, bekommt damit genau
+    das, was er vorher bekam (siehe backend/README.md,
+    "Geschlechts-Dimension").
 
     `category` akzeptiert nur "wt": die Quelle (Wikipedia-Artikel "UCI World
     Tour") listet ausschließlich WorldTeams, und der Scraper schreibt
@@ -36,14 +45,17 @@ def list_teams(category: Optional[Literal["wt"]] = None):
     # Promise.all, und eine 503 daraus würde alle vier Kacheln leer lassen,
     # nicht nur die betroffene.
     if not db.is_configured():
-        return {"teams": [], "last_updated": None, "error": RIDERS_NOT_CONFIGURED}
+        return {"teams": [], "last_updated": None, "gender": gender,
+                "error": RIDERS_NOT_CONFIGURED}
     try:
-        teams = db.get_teams(category)
+        teams = db.get_teams(category, gender=gender)
         last_updated = db.teams_last_updated()
     except Exception:  # noqa: BLE001 - Detail nur ins Log, siehe messages.py
         logger.exception("Team-Liste konnte nicht gelesen werden")
-        return {"teams": [], "last_updated": None, "error": DB_UNAVAILABLE}
-    return {"teams": teams, "last_updated": last_updated, "error": None}
+        return {"teams": [], "last_updated": None, "gender": gender,
+                "error": DB_UNAVAILABLE}
+    return {"teams": teams, "last_updated": last_updated, "gender": gender,
+            "error": None}
 
 
 @router.get("/{team_id}")

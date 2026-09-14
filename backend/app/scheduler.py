@@ -185,6 +185,12 @@ def refresh_rosters() -> None:
                 "birth_date": rider.birth_date,
                 "wiki_url": rider.wiki_url,
                 "current_team_id": team.id,
+                # Die Scraper lesen ausschliesslich Maenner-Quellen
+                # (WORLDTEAMS_PAGE, season_page_titles), deshalb fest 'm'.
+                # Kommt der Frauen-Import, gibt der Aufrufer das Geschlecht
+                # der Quelle mit - siehe backend/README.md, "Was der
+                # Frauen-Import anzufassen hat".
+                "gender": team.gender,
             })
 
     # Nur schreiben, was sich tatsächlich geändert hat. Ohne diesen Vergleich

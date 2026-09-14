@@ -8,7 +8,7 @@
 // darunter, alle Team-Stationen laut Wikipedia-Infobox (auch außerhalb der
 // World Tour, z.B. frühere Continental-Teams).
 import { Api, escapeHtml, safeUrl } from './api.js';
-import { renderComingSoonIfWomen, renderNav } from './nav.js';
+import { apiGender, renderComingSoonIfWomen, renderNav } from './nav.js';
 import { formatBirthDate } from './riders.js';
 import { errorPanel, loadingPanel, riderInitials, starten } from './ui.js';
 
@@ -16,7 +16,10 @@ starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Fahrer' }] });
 
     const content = document.getElementById('rider-content');
-    if (renderComingSoonIfWomen(content)) return;
+    if (await renderComingSoonIfWomen(content, async () => {
+        const res = await Api.getRiders(null, { limit: 1, gender: apiGender() });
+        return !res.total;
+    })) return;
 
     const riderId = new URLSearchParams(window.location.search).get('id');
     if (!riderId) {
@@ -28,7 +31,7 @@ starten(async () => {
     try {
         const [rider, teamsRes] = await Promise.all([
             Api.getRider(riderId),
-            Api.getTeams().catch(() => ({ teams: [] })),
+            Api.getTeams(null, apiGender()).catch(() => ({ teams: [] })),
         ]);
         renderRider(content, rider, teamsRes.teams || []);
     } catch (err) {

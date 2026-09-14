@@ -25,6 +25,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ..models import RiderHistory, RiderStint, RosterRider, Team
+from ..gender import GENDER_DEFAULT, gender_prefix
 from ..text import normalize_dashes, slugify
 from .wikipedia import fetch_lead_section, fetch_section, wiki_title_from_url
 
@@ -178,8 +179,20 @@ def fetch_rider_history(rider_wiki_title: str) -> RiderHistory:
     return parse_rider_history(html)
 
 
-def rider_id_for(name: str) -> str:
-    return slugify(name)
+def rider_id_for(name: str, gender: str = GENDER_DEFAULT) -> str:
+    """ID eines Fahrers oder einer Fahrerin.
+
+    Der Namens-Slug ist von Natur aus nicht eindeutig - zwei Personen
+    gleichen Namens landen in derselben Zeile, und das gilt auch innerhalb
+    eines Feldes. Das Geschlecht nimmt einen Teil davon weg (eine Simon
+    Yates und ein Simon Yates kollidieren nicht mehr), aber nicht alles.
+
+    Die eigentliche Lösung ist ein Schlüssel aus der Wikidata-QID statt aus
+    dem Namen. Die Spalte dafür steht seit Migration 0002 bereit und wird
+    gefüllt; der Wechsel des Primärschlüssels ist ein eigener,
+    datenverändernder Schritt - siehe backend/README.md, Abschnitt "Stabile
+    Fahrer-IDs: der Plan"."""
+    return gender_prefix(gender) + slugify(name)
 
 
 def split_name(full_name: str) -> tuple[str, str]:

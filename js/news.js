@@ -12,7 +12,10 @@ starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'News' }] });
 
     const content = document.getElementById('news-content');
-    if (renderComingSoonIfWomen(content)) return;
+    // Ohne Leer-Prüfung: der RSS-Auszug ist allgemeine Radsport-Presse
+    // und kennt keine Geschlechts-Dimension. Bei "Frauen" steht hier
+    // deshalb weiter der Platzhalter - wie bisher.
+    if (await renderComingSoonIfWomen(content)) return;
 
     content.innerHTML = loadingPanel('Lade News…');
     try {
