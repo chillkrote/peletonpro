@@ -412,6 +412,27 @@ sowohl in `GET /api/riders/{id}` (`seasons[].uci_points`) als auch in
 `GET /api/export/seasons.csv` - aktuell überall `null`/leer, bis der
 externe Import läuft.
 
+### Das Reglement dahinter: `docs/uci-punkte.md`
+
+Wofür die UCI überhaupt Punkte vergibt, steht jetzt nachprüfbar im Repo:
+**`docs/uci-punkte.md`** plus zwei Datendateien
+(`docs/uci-punkte-2026.csv` mit allen 1564 Punktwerten aus Kapitel X der
+Straßen-Reglemente, `docs/uci-punkte-2026-wt-stufen.csv` mit der Zuordnung
+Rennen → Stufe). Geprüft mit `python3 scripts/check-uci-punkte.py`.
+
+Drei Ergebnisse daraus, die dieses Backend betreffen:
+
+1. **Männer- und Frauenskala sind zahlengleich** (belegt, nicht vermutet —
+   eine der 14 Prüfungen). Eine Punktetabelle mit `gender`-Spalte, keine
+   zwei Tabellen.
+2. **`taxonomy.Category` reicht für eine Berechnung nicht.** Die Skala
+   unterscheidet im Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U —
+   auf Platz 1 sind das 125, 40 und 30 Punkte. Alle drei landen heute in
+   `continental`.
+3. **`rider_season_points.uci_points` ist `INTEGER`.**
+   Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt; die
+   Spalte braucht `NUMERIC(8,2)`, sobald echte Werte kommen.
+
 **Render-Postgres-Free-Tier-Hinweis:** die kostenlose Datenbank läuft nach
 30 Tagen ab (`expiresAt` bei Erstellung) und wird dann von Render gelöscht,
 sofern sie nicht vorher auf einen bezahlten Plan angehoben wird. Rechtzeitig
@@ -1069,6 +1090,7 @@ PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
 PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
 DATABASE_URL=... python3 scripts/check-kadenz.py # Migration 0007 + Saison-Kadenz
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
+python3 scripts/check-uci-punkte.py             # UCI-Punkteskalen unter docs/
 ```
 
 `check-migration-0003.sh` prüft sechs Dinge: die Constraints werden auf
