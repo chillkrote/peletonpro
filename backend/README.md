@@ -1355,16 +1355,28 @@ kompletten Renn-Liste ab und musste die dafür laden.
 
 ### Fremd-Stylesheets
 
-Alle sechs Seiten laden Font Awesome von `cdnjs.cloudflare.com` ohne
-`integrity`. Ein kompromittiertes CDN kann damit beliebiges CSS im Kontext
+Alle sechs Seiten laden Font Awesome von `cdnjs.cloudflare.com`. Ohne
+`integrity` kann ein kompromittiertes CDN damit beliebiges CSS im Kontext
 der Seite ausführen - CSS reicht für Datenabfluss über Attribut-Selektoren
 und Hintergrundbild-URLs.
 
-Der Hash muss aus der echten Datei gebildet werden; ein geratener Wert
-blockiert das Stylesheet komplett und die Seiten verlieren alle Icons.
-`scripts/add-sri.sh` holt die Datei, prüft Grösse und Inhalt, bildet den
-SHA-384 und trägt `integrity` samt `crossorigin` in alle sechs Seiten ein -
-idempotent, also auch beim Versions-Upgrade erneut aufrufbar.
+**Erledigt** (Commit `f476e35`): alle sechs Seiten tragen
+
+    integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0"
+    crossorigin="anonymous" referrerpolicy="no-referrer"
+
+mit identischem Hash. Im Browser gegengeprüft: die Icons erscheinen weiter,
+die Konsole meldet kein `Failed to find a valid digest`. Diese Prüfung ist
+nicht optional - ein Hash, der nicht zur ausgelieferten Datei passt,
+blockiert das Stylesheet komplett, und die Seiten verlieren *alle* Icons,
+ohne dass sonst etwas auffällt (Layout, Farben und Schriften kommen aus
+`style/style.css`, das lokal liegt).
+
+Eingetragen hat ihn `scripts/add-sri.sh`: holt die Datei, prüft Grösse und
+Inhalt, bildet den SHA-384 und setzt die Attribute - idempotent, also beim
+Versions-Upgrade von Font Awesome erneut aufzurufen. Der Hash steht
+absichtlich nicht im Skript: er muss aus der echten Datei kommen, und die
+Umgebung, in der das Skript entstand, kommt nicht an cdnjs heran.
 
 Selbst-Hosten wäre die dauerhafte Lösung (21 tatsächlich benutzte Icons,
 gezählt über `grep -ohrE "fa-[a-z0-9-]+" *.html js/*.js`), ändert aber das
