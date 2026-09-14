@@ -25,11 +25,13 @@ Daraus folgt: eine ID mit "--" ist eindeutig eine Frauen-ID, und keine
 Bestands-ID kann eine sein. Ein einfaches "w-" wäre NICHT sicher gewesen -
 "W Smith" wird zu "w-smith", und das ist ein gültiger Männer-Slug.
 """
-from typing import Literal
+from typing import Literal, get_args
 
 Gender = Literal["m", "w"]
 
-GENDERS: tuple[str, ...] = ("m", "w")
+# Aus dem Literal abgeleitet, nicht daneben geschrieben - sonst stünde das
+# Vokabular auch in dieser Datei zweimal (vgl. app/taxonomy.py).
+GENDERS: tuple[str, ...] = get_args(Gender)
 GENDER_DEFAULT: Gender = "m"
 
 # Siehe Modul-Docstring: slugify erzeugt nie "--".

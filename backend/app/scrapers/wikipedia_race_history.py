@@ -35,6 +35,7 @@ from typing import Optional
 from bs4 import BeautifulSoup
 
 from ..models import RaceResultEntry, RaceStage
+from ..taxonomy import pruefe_achsen
 from ..text import normalize_dashes
 from .wikipedia import (
     fetch_full_page,
@@ -73,6 +74,7 @@ def season_page_titles(year: int, category: str, circuit: Optional[str] = None) 
     """Kandidaten-Seitentitel für die Saison-Übersichtsseite, probiert in
     dieser Reihenfolge - siehe Modul-Docstring für die historischen
     Formatbrüche, die das nötig machen."""
+    pruefe_achsen(category, circuit)
     if category == "wt":
         titles = [f"{year} UCI World Tour"]
         if year <= 2010:
@@ -81,11 +83,15 @@ def season_page_titles(year: int, category: str, circuit: Optional[str] = None) 
     if category == "proseries":
         return [f"{year} UCI ProSeries"]
     if category == "continental":
+        # pruefe_achsen hat den Fall oben schon abgefangen; die Prüfung hier
+        # bleibt als Zusicherung für direkte Aufrufer dieser Funktion.
         if not circuit:
             raise ValueError("circuit ist für category='continental' erforderlich")
         name = CIRCUIT_NAMES[circuit]
         next_suffix = f"{(year + 1) % 100:02d}"
         return [f"{year} UCI {name} Tour", f"{year}–{next_suffix} UCI {name} Tour"]
+    # Unerreichbar: pruefe_achsen oben lehnt unbekannte Kategorien ab.
+    # Bleibt stehen, damit die Funktion auch ohne diese Annahme total ist.
     raise ValueError(f"Unbekannte Kategorie: {category}")
 
 
