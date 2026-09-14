@@ -1248,27 +1248,58 @@ Unterschied entsteht nur da, wo er nicht traf.
 
 #### Was die Abdeckung realistisch ist
 
-`riders` enthält nur die Kader der aktuellen 18 WorldTeams (517 Fahrer).
-`race_results` reicht über alle Saisons seit 2020 und enthält ProSeries und
-Continental - also tausende Namen von Fahrern, die nie in einem WorldTeam
-waren oder längst aufgehört haben. **`rider_id` bleibt deshalb für die
-Mehrheit der Zeilen `NULL`**, und das ist die Datenlage, kein Fehler des
-Backfills. Genau darum sind die Spalten nullable, die Fremdschlüssel
-`ON DELETE SET NULL` (ein gelöschter Fahrer darf die Ergebniszeile nicht
-mitnehmen - das Ergebnis ist auch ohne ihn ein Fakt) und die Indizes
-partiell (`WHERE ... IS NOT NULL`).
+Gemessen in Produktion (Startlog des Deploys von Migration 0004, Lauf über
+22.474 Ergebniszeilen in 15 Sekunden):
 
-Die echten Zahlen liess sich hier nicht messen: die Datenbank nimmt keine
-externen Verbindungen an. Die Migration berichtet sie deshalb selbst per
-`RAISE NOTICE`, und `app/migrations.py` hat dafür jetzt einen
-Notice-Handler - vorher verwarf psycopg Server-Meldungen stillschweigend,
-eine Migration konnte abbrechen, aber nicht berichten. Im Startlog steht
-nach dem Deploy:
+| | Zeilen | Anteil |
+|---|---:|---:|
+| Ergebniszeilen insgesamt | 22.474 | |
+| `rider_id` gesetzt | 12.123 | 53,9 % |
+| `team_id` gesetzt | 14.502 | 64,5 % |
+
+Aufgeteilt nach Zuordnungsweg:
+
+| Schritt | Zeilen | Anteil der zugeordneten |
+|---|---:|---:|
+| B heutiger Teamname | 5.414 | 37,3 % |
+| C Station in der Saison | 5.446 | 37,6 % |
+| D alter Teamname | 3.642 | 25,1 % |
+
+**Die Vorhersage in dieser Datei war falsch.** Hier stand, `rider_id` werde
+„für die Mehrheit der Zeilen NULL bleiben", weil `riders` nur die Kader der
+aktuellen 18 WorldTeams enthält (517 Fahrer) und `race_results` über alle
+Saisons seit 2020 auch ProSeries und Continental abdeckt. Tatsächlich sind
+es 53,9 % zugeordnete Zeilen. Der Grund für den Irrtum: gezählt werden
+Ergebnis*zeilen*, nicht Namen - dieselben 517 Fahrer tauchen über die
+WorldTour-Rennen hinweg tausendfach auf, und WorldTour-Rennen stellen den
+grössten Teil der Ergebnisse. Die 46,1 % ohne `rider_id` sind weiterhin die
+Datenlage und kein Fehler des Backfills; deshalb bleiben die Spalten
+nullable, die Fremdschlüssel `ON DELETE SET NULL` (ein gelöschter Fahrer
+darf die Ergebniszeile nicht mitnehmen - das Ergebnis ist auch ohne ihn ein
+Fakt) und die Indizes partiell (`WHERE ... IS NOT NULL`).
+
+**Und hier steht, wie gross Befund 18 wirklich war:** die Schritte C und D
+zusammen haben 9.088 Zeilen zugeordnet - 62,7 % aller gefundenen Teams.
+Genau diese Zeilen konnte der frühere Vergleich `res.team_name = teams.name`
+**nicht** finden, weil dort ein alter oder anders geschriebener Teamname
+stand. Die Team-Statistik hat also nicht ein paar Randfälle verpasst,
+sondern knapp zwei Drittel der zuordenbaren Ergebnisse - stillschweigend,
+als „null Siege".
+
+Die Summenprobe stimmt: B + C + D ergibt genau die 14.502 gesetzten
+`team_id`. Die drei Wege überlappen sich also nicht, keine Zeile wurde
+doppelt gezählt.
+
+Messbar war das nur in Produktion: die Datenbank nimmt keine externen
+Verbindungen an. Die Migration berichtet die Zahlen deshalb selbst per
+`RAISE NOTICE`, und `app/migrations.py` hat dafür einen Notice-Handler -
+vorher verwarf psycopg Server-Meldungen stillschweigend, eine Migration
+konnte abbrechen, aber nicht berichten. Im Startlog steht nach dem Deploy:
 
 ```
-0004: <n> Ergebniszeilen insgesamt
-0004: rider_id gesetzt bei <n> Zeilen (Schritt A: <n>)
-0004: team_id gesetzt bei <n> Zeilen (B Teamname: <n>, C Station: <n>, D Altname: <n>)
+0004: 22474 Ergebniszeilen insgesamt
+0004: rider_id gesetzt bei 12123 Zeilen (Schritt A: 12123)
+0004: team_id gesetzt bei 14502 Zeilen (B Teamname: 5414, C Station: 5446, D Altname: 3642)
 ```
 
 #### Was damit möglich wird, aber noch nicht gebaut ist
