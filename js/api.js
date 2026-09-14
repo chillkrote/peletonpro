@@ -105,6 +105,16 @@ export const Api = {
     getRider(id) {
         return apiGet(`/api/riders/${encodeURIComponent(id)}`);
     },
+    // Ergebnisse eines Fahrers, paginiert (Default 50, serverseitig max 200 -
+    // siehe routers/riders.py). Kein `gender`: das Geschlecht steckt in der
+    // Fahrer-ID.
+    getRiderResults(id, { limit, offset } = {}) {
+        const params = new URLSearchParams();
+        if (limit !== undefined) params.set('limit', limit);
+        if (offset !== undefined) params.set('offset', offset);
+        const query = params.toString();
+        return apiGet(`/api/riders/${encodeURIComponent(id)}/results${query ? `?${query}` : ''}`);
+    },
     getRaceSeasons(gender) {
         const query = withGender(new URLSearchParams(), gender).toString();
         return apiGet(`/api/race-history/seasons${query ? `?${query}` : ''}`);

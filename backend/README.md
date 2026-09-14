@@ -1134,6 +1134,79 @@ nächste Schritt ist damit: Seite abrufen, Spaltenaufbau mit dem von
 `TeamCategory` gemeinsam erweitern. Bis dahin bleibt der Filter bei `wt`,
 statt Werte anzunehmen, für die es keine Zeilen gibt.
 
+### Ergebnisse eines Fahrers
+
+Der erste Lesepfad, der `race_results.rider_id` benutzt - und der Grund,
+warum Befund 8 überhaupt lohnt.
+
+```
+GET /api/riders/{id}/results?limit=50&offset=0
+```
+
+**Eigener Endpunkt, kein Feld in `/api/riders/{id}`.** Die Detailantwort hat
+eine feste Größe (Stammdaten, Saisons, Stationen); diese Liste hat keine -
+ein Fahrer mit sieben Saisons kommt auf einige hundert Zeilen, weil
+Etappenergebnisse mitzählen. Als Feld hätte sie jede Profilansicht mit Daten
+belastet, die erst beim Hinunterscrollen gebraucht werden. Serverseitig
+`limit` max. 200, Default 50; `total` liegt in der Antwort, damit das
+Frontend das Ende erkennt, ohne eine leere Seite anzufordern.
+
+Kein `gender`-Parameter: das Geschlecht steckt in der Fahrer-ID (siehe „Die
+ID-Regel").
+
+**Warum 404 bei unbekannter ID.** Der Endpunkt prüft zuerst, ob der Fahrer
+existiert. Ohne diese Prüfung wäre die Antwort auf einen Tippfehler eine
+leere Liste - „hat keine Ergebnisse" statt „gibt es nicht". Dieselbe
+Verwechslung, die die Team-Statistik hatte.
+
+**Die Abfrage geht über `rider_id`, nicht über den Namen.** Ein
+Namensvergleich hätte hier dieselbe stille Lücke: eine abweichende
+Schreibweise in der Ergebnistabelle ergäbe eine leere Liste, die wie ein
+Ergebnis aussieht.
+
+#### Was die Seite zeigt
+
+`js/rider.js` lädt die Liste **nach** dem Profil, ohne `await` und mit
+eigenem `try/catch`. Scheitert sie, steht das Profil weiter da und nur der
+Ergebnis-Abschnitt trägt eine Meldung, die das ausdrücklich sagt. Vorher
+wäre der Fehler in den äusseren `catch` gelaufen, und der zeigt „Dieser
+Fahrer wurde nicht gefunden" - über dem vollständig geladenen Fahrer.
+
+Pro Zeile: Saison, Rennen, bei Etappen die Etappennummer, Platz und
+Zeit/Abstand. `stage_number IS NULL` heisst Gesamtwertung **oder**
+Eintagesrennen - welches von beiden, steht nicht in der Ergebniszeile,
+deshalb wird dort gar nichts behauptet und nur Etappen werden benannt
+(gleiche Entscheidung wie in `js/team.js`). Platz 1 bekommt das
+Pokal-Symbol, Grand Tours ein Abzeichen. „Weitere laden" erscheint nur,
+solange `total` grösser ist als das Geladene.
+
+#### Prüfen
+
+```bash
+node scripts/check-rider-results.mjs   # braucht Backend :8001 + statisch :8000
+```
+
+25 Prüfungen in Chromium: die Tabelle erscheint mit 50 Zeilen, der Knopf
+hängt die restlichen 10 an und verschwindet danach, Zählzeile stimmt,
+Pokal genau bei den zwei Siegen, GT-Abzeichen genau bei den drei
+Grand-Tour-Zeilen, ein Fahrer ohne Ergebnisse bekommt den Hinweis statt
+eines Fehlers, und bei abgewürgtem Ergebnis-Endpunkt bleibt das Profil
+stehen.
+
+**Warum ein eigenes Skript und nicht `check-pages.mjs`:** dort wird
+geprüft, dass die Seite rendert und keinen JavaScript-Fehler wirft. Die
+Ergebnisliste wird aber absichtlich nachgeladen und fängt ihre Fehler
+selbst - sie kann also still fehlen, während die Seite einwandfrei
+aussieht. Genau das würde `check-pages.mjs` nicht bemerken.
+
+Gegengeprüft, dass das Skript etwas taugt: mit `arguments.callee` statt der
+benannten Funktion schlagen drei Prüfungen fehl (die Liste bleibt bei 50
+Zeilen), mit einem nicht erhöhten `offset` zwei (die zweite Seite hängt
+dieselben Zeilen erneut an, 100 statt 60). Nicht gegengeprüft ist der
+Fehlerpfad selbst: die Zusicherung dafür existiert und besteht, aber ein
+Versuch, sie gezielt zu brechen, hat statt des Fehlerpfads die Syntax
+zerstört.
+
 ### Renn-Daten: ein Pfad statt zwei
 
 Rennen gab es zweimal im Baum:
@@ -1304,9 +1377,7 @@ konnte abbrechen, aber nicht berichten. Im Startlog steht nach dem Deploy:
 
 #### Was damit möglich wird, aber noch nicht gebaut ist
 
-Ein Endpunkt „Ergebnisse dieses Fahrers" über `rider_id` - das ist der
-eigentliche Nutzen für die Fahrer-Detailseite und neue API-Fläche, also ein
-eigener Schritt. Ebenso ein regelmässiger Aufruf von
+Ein regelmässiger Aufruf von
 `race_results_ids_nachtragen()` ohne Argument, damit neu aufgenommene Fahrer
 alte Ergebnisse rückwirkend zugeordnet bekommen; das wäre ein
 Volltabellen-Durchlauf und will vorher auf der Free-Tier-Datenbank
@@ -1913,6 +1984,7 @@ cd backend && python -m app.backup dump --keep 2 && \
 | `GET /api/news?limit=30` | Aggregierter Newsfeed |
 | `GET /api/riders?team=<team_id>&gender=m\|w&limit=&offset=` | Fahrer, optional nach aktuellem Team gefiltert, sortiert nach Nachname |
 | `GET /api/riders/{id}` | Ein Fahrer inkl. `history` (rohe Team-Zeiträume) und `seasons` (pro Saison abgeleiteter Team-Link, siehe "Vor-/Nachname, Saison-Team-Links, Strava-Profile" oben) |
+| `GET /api/riders/{id}/results?limit=&offset=` | Die Platzierungen eines Fahrers, neueste Saison zuerst, paginiert (Default 50, max 200) - siehe "Ergebnisse eines Fahrers" |
 | `GET /api/race-history?season=&category=wt\|proseries\|continental&circuit=africa\|asia\|europe\|america\|oceania&gender=m\|w&limit=&offset=` | Renn-Historie seit 2020, gefiltert/paginiert, ohne Ergebnisse/Etappen (siehe "Renn-Historie" oben) |
 | `GET /api/race-history/seasons?gender=m\|w` | Alle Saisons, für die Rennen vorliegen |
 | `GET /api/race-history/{id}` | Ein Rennen inkl. `results` (Top 10+) und bei Mehretagenrennen `stages[]` (je Etappe eigene `results`) |
@@ -1937,7 +2009,8 @@ ein Pfad statt zwei".
 Alle Listen-Endpunkte (`/api/teams`, `/api/riders`, `/api/race-history`,
 `/api/news`) antworten auch bei fehlender Datenbank mit HTTP 200 und
 `error` im Rumpf; die Detail-Endpunkte (`/api/teams/{id}`,
-`/api/riders/{id}`, `/api/race-history/{id}`) mit HTTP 503. Der Unterschied
+`/api/riders/{id}`, `/api/riders/{id}/results`, `/api/race-history/{id}`)
+mit HTTP 503. Der Unterschied
 ist Absicht: `js/home.js` holt vier Listen in einem `Promise.all`, und eine
 503 daraus würde alle vier Kacheln leer lassen statt nur der betroffenen.
 

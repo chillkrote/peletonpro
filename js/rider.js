@@ -6,11 +6,12 @@
 // backend/README.md, Abschnitt "Bekannte Lücke": ein künftiger Import aus
 // einer anderen UCI-Punkte-Datenbank soll die Werte nachtragen) sowie,
 // darunter, alle Team-Stationen laut Wikipedia-Infobox (auch außerhalb der
-// World Tour, z.B. frühere Continental-Teams).
+// World Tour, z.B. frühere Continental-Teams) und die Ergebnisse aus der
+// Renn-Historie.
 import { Api, escapeHtml, safeUrl } from './api.js';
 import { apiGender, renderComingSoonIfWomen, renderNav } from './nav.js';
 import { formatBirthDate } from './riders.js';
-import { errorPanel, loadingPanel, riderInitials, starten } from './ui.js';
+import { errorPanel, formatCalendarDate, loadingPanel, riderInitials, starten } from './ui.js';
 
 starten(async () => {
     renderNav({ crumbs: [{ label: 'Start', href: 'index.html' }, { label: 'Teams & Fahrer', href: 'teams.html' }, { label: 'Fahrer' }] });
@@ -34,6 +35,12 @@ starten(async () => {
             Api.getTeams(null, apiGender()).catch(() => ({ teams: [] })),
         ]);
         renderRider(content, rider, teamsRes.teams || []);
+        // Erst nach dem Rendern des Profils: die Ergebnisliste ist ein
+        // eigener, paginierter Endpunkt, und das Profil soll nicht auf sie
+        // warten. Bewusst ohne await - ein Fehler dort darf die Seite nicht
+        // in den catch-Zweig unten ziehen, der "Fahrer nicht gefunden"
+        // zeigen würde.
+        ladeErgebnisse(riderId);
     } catch (err) {
         // 404 heißt: diese Fahrer-ID gibt es nicht. Alles andere ist ein
         // Fehler auf unserer Seite - vorher stand in beiden Fällen "wurde
@@ -111,6 +118,11 @@ function renderRider(container, rider, teams) {
             }
         </div>
 
+        <div class="team-wins-wrap" id="ergebnisse">
+            <h2>Ergebnisse</h2>
+            <div id="ergebnis-inhalt">${loadingPanel('Lade Ergebnisse…')}</div>
+        </div>
+
         ${
             history.length > 0
                 ? `
@@ -131,4 +143,109 @@ function renderRider(container, rider, teams) {
                 : ''
         }
     `;
+}
+
+
+// ===== ERGEBNISSE =====
+// Möglich geworden durch race_results.rider_id (Migration 0004). Vorher
+// stand dort nur der Name als Text, und diese Liste hätte über einen
+// Namensvergleich gehen müssen - mit derselben stillen Lücke, die die
+// Team-Statistik hatte (siehe backend/README.md, "Ergebniszeilen:
+// verknüpft statt nur beschriftet").
+
+// Muss zum Default des Endpunkts passen (RESULTS_DEFAULT_LIMIT in
+// routers/riders.py). Serverseitiges Maximum ist 200.
+const ERGEBNISSE_PRO_SEITE = 50;
+
+async function ladeErgebnisse(riderId) {
+    const inhalt = document.getElementById('ergebnis-inhalt');
+    if (!inhalt) return;
+
+    let offset = 0;
+    let gesamt = 0;
+    const zeilen = [];
+
+    // Benannte Funktion, damit sie sich selbst als "Weitere laden"-Handler
+    // übergeben kann. Ein erster Entwurf stand hier mit arguments.callee.
+    // Das ist im strict mode - und Module laufen immer so - ein
+    // vergifteter Zugriff: er wirft beim AUFRUF einen TypeError, nicht beim
+    // Laden. Die Seite hätte also normal ausgesehen und erst beim Klick auf
+    // "Weitere laden" nichts getan. Nachgemessen mit
+    // scripts/check-rider-results.mjs: drei Prüfungen schlagen fehl, die
+    // Liste bleibt bei 50 Zeilen stehen.
+    async function naechsteSeite() {
+        const res = await Api.getRiderResults(riderId, { limit: ERGEBNISSE_PRO_SEITE, offset });
+        // Der Endpunkt antwortet auch bei einem Datenbankproblem mit 200 und
+        // `error` im Rumpf (siehe routers/messages.py) - das muss hier
+        // geprüft werden, sonst sieht ein Ausfall wie "keine Ergebnisse" aus.
+        if (res.error) throw new Error(res.error);
+        zeilen.push(...(res.results || []));
+        offset += ERGEBNISSE_PRO_SEITE;
+        gesamt = res.total || 0;
+        zeichne(inhalt, zeilen, gesamt, naechsteSeite);
+    }
+
+    try {
+        await naechsteSeite();
+    } catch (err) {
+        console.error('Fehler beim Laden der Ergebnisse:', err);
+        inhalt.innerHTML = errorPanel('Ergebnisse konnten nicht geladen werden.',
+            'Das Profil oben ist davon nicht betroffen.');
+    }
+}
+
+function zeichne(inhalt, zeilen, gesamt, mehrLaden) {
+    if (zeilen.length === 0) {
+        inhalt.innerHTML = `<p style="color:var(--text-muted);font-size:14px">Für diesen Fahrer sind noch keine Ergebnisse erfasst.</p>`;
+        return;
+    }
+
+    inhalt.innerHTML = `
+        <div class="season-table-wrap">
+            <table class="season-table rider-results">
+                <thead><tr><th>Saison</th><th>Rennen</th><th>Platz</th><th>Zeit / Abstand</th></tr></thead>
+                <tbody>${zeilen.map(zeile).join('')}</tbody>
+            </table>
+        </div>
+        <p class="rr-count">${zeilen.length} von ${gesamt} Platzierungen</p>
+        ${zeilen.length < gesamt ? `<button type="button" class="rr-more" id="ergebnis-mehr">Weitere laden</button>` : ''}
+    `;
+
+    const knopf = document.getElementById('ergebnis-mehr');
+    if (knopf) {
+        knopf.addEventListener('click', async () => {
+            knopf.disabled = true;
+            knopf.textContent = 'Lädt…';
+            try {
+                await mehrLaden();
+            } catch (err) {
+                console.error('Fehler beim Nachladen der Ergebnisse:', err);
+                knopf.disabled = false;
+                knopf.textContent = 'Erneut versuchen';
+            }
+        }, { once: true });
+    }
+}
+
+function zeile(r) {
+    // stage_number NULL heisst Gesamtwertung ODER Eintagesrennen - was von
+    // beiden, steht nicht in der Ergebniszeile. Deshalb gar kein Zusatz
+    // statt einer Behauptung; nur Etappen werden benannt. Gleiche
+    // Unterscheidung wie in js/team.js.
+    const etappe = r.stage_number ? ` <span class="wr-stage">Etappe ${r.stage_number}</span>` : '';
+    // Nur Tag und Monat: das Jahr steht schon in der Saison-Spalte daneben.
+    const datum = r.start_date
+        ? formatCalendarDate(r.start_date, { day: '2-digit', month: 'short' })
+        : '';
+    return `
+        <tr>
+            <td class="season-year">${r.season}</td>
+            <td>
+                <a href="races.html">${escapeHtml(r.race_name)}</a>${etappe}
+                ${r.is_grand_tour ? ` <span class="gt-badge" title="Grand Tour">GT</span>` : ''}
+                ${datum ? `<div class="rr-date">${escapeHtml(datum)}</div>` : ''}
+            </td>
+            <td class="rr-pos">${r.position === 1 ? `<i class="fas fa-trophy trophy"></i> ` : ''}${r.position}</td>
+            <td class="rr-gap">${r.time_or_gap ? escapeHtml(r.time_or_gap) : '—'}</td>
+        </tr>`;
 }
