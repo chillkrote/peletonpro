@@ -28,6 +28,10 @@ cd "$(dirname "$0")/.."
 export PGHOST PGPORT PGUSER
 DB=mig0002_test
 fehler=0
+
+# Gemeinsamer Wertevergleich (eine Kopie statt drei).
+source "$(dirname "$0")/_datenvergleich.sh"
+
 meld()   { printf '  %-56s %s\n' "$1" "$2"; }
 pruefe() { if [ "$2" = "$3" ]; then meld "$1" "ok"; else meld "$1" "FEHLER: '$2' != '$3'"; fehler=$((fehler+1)); fi; }
 
@@ -52,12 +56,9 @@ zaehle() {
     ||' ergebnisse='||(SELECT count(*) FROM race_results)
     ||' seedlog='||(SELECT count(*) FROM race_history_seed_log)"
 }
-spalten_md5() {
-  for spec in "${SPALTEN[@]}"; do
-    t=${spec%%:*}; cols=${spec#*:}
-    echo "$t $(psql -tA -d "$DB" -c "SELECT md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),'')) FROM (SELECT $cols FROM $t) x")"
-  done
-}
+# Wertevergleich gemeinsam mit check-migrations.sh und -0003.sh, siehe
+# scripts/_datenvergleich.sh.
+spalten_md5() { vergleich_md5 "$DB" "$(printf '%s\n' "${SPALTEN[@]}")"; }
 
 psql -q -c "DROP DATABASE IF EXISTS $DB;" -c "CREATE DATABASE $DB;" postgres >/dev/null
 

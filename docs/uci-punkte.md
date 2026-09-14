@@ -139,17 +139,74 @@ also vom **Vorjahr** ab und ändert sich jährlich.
 - **U23-Mannschaftszeitfahren:** richtet eine Konföderation ein separates
   U23-Mannschaftszeitfahren aus, gibt es dafür **keine** Punkte.
 
-## Was in diesem Dokument fehlt
+## Artikel 2.6.001: eine Korrektur
 
-**Artikel 2.6.001.** Beide Skalen verweisen darauf: „The awarding of points
-for stage races is in accordance with article 2.6.001 regarding the
-duration of the event." Die Punktevergabe bei Etappenrennen hängt also von
-der **Renndauer** ab, und dieser Artikel steht in Kapitel VI, nicht in
-Kapitel X. **Ohne ihn ist die Berechnung für Etappenrennen unvollständig.**
+Beide Skalen verweisen auf Artikel 2.6.001: „The awarding of points for
+stage races is in accordance with article 2.6.001 **regarding the duration
+of the event**." Ich hatte das als **Punkteskala nach Renndauer** gelesen —
+also als fehlende Tabelle. **Das ist falsch.** Kapitel VI (Ausgabe
+01.09.2026, Seiten 63–73) liegt inzwischen vor, und 2.6.001 lautet:
 
-**Kontinental-Ranglisten für Frauen.** §3 (Art. 2.10.018 ff.) regelt nur
-die Männer. Ob es für Frauen keine Kontinentalrangliste gibt oder sie an
-anderer Stelle steht, lässt sich aus diesem Kapitel nicht entscheiden.
+> Stage races shall be run over a minimum of two days with a general time
+> classification. They shall be run in road race stages and time trial
+> stages.
+>
+> **If only one stage or prologue is completed and the other stages are
+> cancelled, only the points for the stage will be awarded** and included
+> in the UCI Rankings. No additional points will be awarded (e.g. for the
+> general time classification, wearing of the leader's jersey or secondary
+> classifications).
+
+Es ist also keine Skala, sondern eine **Ausfallregel**: „regarding the
+duration" meint ein Rennen, das seine geplante Dauer *nicht erreicht* hat.
+Bleibt von einem Etappenrennen nur eine Etappe oder ein Prolog übrig,
+zählen **ausschließlich** die Etappenpunkte — kein Gesamtklassement, kein
+Trikot, keine Nebenwertungen.
+
+Praktisch heißt das: es fehlt **keine** Tabelle. Aber die Berechnung
+braucht eine Bedingung, die leicht zu übersehen ist, weil sie nur bei
+abgebrochenen Rennen greift (Wetter, Streckensperrung) — und genau dann
+lieferte eine Berechnung ohne sie zu viele Punkte für die
+Gesamtklassement-Zeile, die in unseren Daten trotzdem steht.
+
+## Kapitel VI: die Regeln für Etappenrennen, die auf die Punkte wirken
+
+| Artikel | Regel | Wirkung auf die Berechnung |
+|---|---|---|
+| 2.6.001 | nur eine Etappe gefahren → nur Etappenpunkte | siehe oben |
+| 2.6.006 | Prologe zählen als Renntag und fürs Gesamtklassement; max. 8 km (Frauen Elite und Junioren: unter 4 km), immer Einzelzeitfahren | ein Prolog ist eine Etappe im Sinne der Etappenpunkte |
+| 2.6.013 | Einzel- und Team-Gesamtklassement auf Zeit sind **verpflichtend** in WorldTour (Männer), Women's WorldTour und Women's ProSeries, sowie ProSeries und Klasse 1+2 der Männer Elite/U23 | für diese Rennen existiert immer ein Gesamtklassement |
+| 2.6.018 | **kein Führungstrikot am ersten Tag** (Prolog oder erste Etappe) | ein Rennen mit N Etappen gibt Trikot-Punkte für **N−1** Etappen, nicht für N |
+| 2.6.018 | maximal 4 Trikots (WorldTour, Women's WorldTour, ProSeries und Klasse 1 der Männer), sonst maximal 6; nur das Trikot des Zeit-Gesamtklassements ist Pflicht | siehe die offene Frage unten |
+| 2.6.018 | führt ein Fahrer mehrere Wertungen, gilt eine Prioritätsreihenfolge (Zeit → Punkte → Berg → sonstige), und der Veranstalter **darf** den Nächstplatzierten das freie Trikot tragen lassen | der **Träger** ist nicht immer der Führende der Wertung |
+| 2.6.025 | die Wertung einer Mannschaftszeitfahr-Etappe zählt „only towards the general individual time classification and the general team classification" | siehe die offene Frage unten |
+| 2.6.032 | wird ein Fahrer außerhalb des Zeitlimits vom Kommissärspräsidenten weitergelassen, werden ihm **alle Punkte der Nebenwertungen entzogen** | eine Punkte-Rücknahme, die aus einem Ergebnis allein nicht hervorgeht |
+| 2.6.008 | „The riders must complete the entire distance of each stage to be included in the classification" | wer nicht gewertet ist, bekommt nichts — folgt schon aus der Ergebnisliste |
+| 2.6.015–2.6.017 | Gleichstandsregeln für Zeit-, Team-, Punkte- und Bergwertung | nur nötig, wenn wir Klassements selbst bilden, nicht wenn wir Endstände lesen |
+| 2.6.019–2.6.021 | Zeitboni (Zwischensprints 3″/2″/1″, Ziel 10″/6″/4″) wirken **nur** aufs Einzel-Zeitklassement, nie bei Zeitfahren | verändert nicht die Punkte, aber wer das Klassement gewinnt |
+
+### Zwei Fragen, die beide Kapitel offenlassen
+
+**Welches Trikot gibt die Punkte?** Die Tabelle heißt „Wearing the race
+leader's jersey in a UCI WorldTour event (per stage)" und hat genau eine
+Zeile (Platz 1). Nach 2.6.018 gibt es aber bis zu vier Trikots. Dass nur
+das Zeit-Gesamtklassement-Trikot zählt, ist die naheliegende Lesart —
+**gesagt wird es in keinem der beiden Kapitel.** Und weil der Veranstalter
+den Nächstplatzierten ein Trikot tragen lassen darf, ist „Träger" nicht
+dasselbe wie „Führender". Vor einer Berechnung muss das geklärt werden;
+eine Annahme würde hier still falsche Punkte erzeugen.
+
+**Geben Mannschaftszeitfahr-Etappen Etappenpunkte?** Art. 2.10.008 sagt
+ja: „For team time trial events **and stages** the points on the scale
+shall be awarded to the team." Art. 2.6.025 sagt, die Wertung solcher
+Etappen zähle nur fürs Einzel-Zeit- und Team-Gesamtklassement.
+Widersprüchlich ist das nicht zwingend — 2.6.025 regelt die *Klassements
+des Rennens*, 2.10.008 die *UCI-Punkte* —, aber die Auflösung steht
+nirgends ausdrücklich. Auch das gehört geklärt, nicht geraten.
+
+**Kontinental-Ranglisten für Frauen** bleiben offen: §3 (Art. 2.10.018 ff.)
+regelt nur die Männer. Ob es sie nicht gibt oder sie an anderer Stelle
+stehen, lässt sich aus Kapitel X nicht entscheiden.
 
 ## Wie die Zahlen geprüft wurden
 
@@ -197,100 +254,150 @@ gemacht wurde. Gegengeprüft, dass die Prüfungen etwas taugen:
 | Platz 30 aus einer Skala entfernt | „Platzfolge ohne Lücke" |
 | ein Etappenrennen aus dem Gesamtklassement gelöscht | „Etappen-/Trikot-Rennen haben ein Gesamtklassement" |
 
-## Schema-Vorschlag
+## Das Schema (Migration 0008)
 
-Die wichtigste Erkenntnis aus der Prüfung: **Männer- und Frauenskala sind
-zahlengleich** — überall außer der einen fehlenden `class2u`-Spalte. Zwei
-getrennte Tabellen wären also nicht nur doppelte Pflege, sie wären doppelte
-Pflege für **dieselben Zahlen**. Eine Tabelle mit einer
-Geschlechts-Spalte, wie sie das Projekt schon für Fahrer, Teams und Rennen
-hat:
+Die Entscheidung ist gefallen: die Punkte werden **selbst berechnet**, nicht
+importiert. Dafür müssen die Skalen abfragbar sein — ein CSV im Repository
+genügt für die Dokumentation, aber nicht für ein JOIN gegen Ergebniszeilen.
+Migration 0008 legt vier Tabellen an.
 
-```sql
--- Welche Stufen es in welcher Saison gibt. Eigene Tabelle, damit die
--- beiden folgenden per Fremdschlüssel darauf zeigen können - eine
--- Rennzuordnung auf eine Stufe ohne Skala wird damit unmöglich, statt
--- erst beim Rechnen als stilles Null-Ergebnis aufzufallen.
-CREATE TABLE uci_stufe (
-    saison  INTEGER NOT NULL,
-    gender  TEXT    NOT NULL,
-    anlass  TEXT    NOT NULL,
-    stufe   TEXT    NOT NULL,
-    PRIMARY KEY (saison, gender, anlass, stufe)
-);
+Die wichtigste Erkenntnis aus der Prüfung ist dabei eingeflossen:
+**Männer- und Frauenskala sind zahlengleich** — überall außer der einen
+fehlenden `class2u`-Spalte. Zwei getrennte Tabellen wären nicht nur doppelte
+Pflege, sie wären doppelte Pflege für *dieselben* Zahlen. Also eine Tabelle
+mit `gender`-Spalte, wie das Projekt sie für Fahrer, Teams und Rennen
+schon hat.
 
--- Die Skala selbst. Ganzzahlig: im Reglement stehen nur ganze Zahlen.
-CREATE TABLE uci_punkte (
-    saison  INTEGER NOT NULL,
-    gender  TEXT    NOT NULL,
-    anlass  TEXT    NOT NULL,
-    stufe   TEXT    NOT NULL,
-    platz   INTEGER NOT NULL CHECK (platz >= 1),
-    punkte  INTEGER NOT NULL CHECK (punkte > 0),
-    PRIMARY KEY (saison, gender, anlass, stufe, platz),
-    FOREIGN KEY (saison, gender, anlass, stufe)
-        REFERENCES uci_stufe (saison, gender, anlass, stufe)
-);
+| Tabelle | Inhalt |
+|---|---|
+| `uci_stufe` | `(saison, gender, anlass, stufe)` — die Schlüsseltabelle |
+| `uci_punkte` | `+ platz, punkte` — die Skala, `INTEGER` |
+| `uci_rennstufe` | `+ rennen_reglement, race_id` — Zuordnung Rennen → Stufe |
+| `uci_quelle` | `datei, sha256, geladen_am` — Merker für den Loader |
 
--- Welches Rennen in welcher Stufe läuft. Pro Saison, weil die UCI die
--- Listen jährlich ändert. race_id statt Rennname - siehe Fallstrick 1.
-CREATE TABLE uci_rennstufe (
-    saison   INTEGER NOT NULL,
-    gender   TEXT    NOT NULL,
-    anlass   TEXT    NOT NULL,
-    stufe    TEXT    NOT NULL,
-    race_id  TEXT    NOT NULL REFERENCES races(id) ON DELETE CASCADE,
-    PRIMARY KEY (saison, gender, anlass, race_id),
-    FOREIGN KEY (saison, gender, anlass, stufe)
-        REFERENCES uci_stufe (saison, gender, anlass, stufe)
-);
+**Warum `uci_stufe` eine eigene Tabelle ist:** die beiden anderen zeigen
+per Fremdschlüssel darauf. Ohne sie wäre eine Rennzuordnung auf eine Stufe
+*ohne Skala* möglich — und die fällt beim Rechnen nicht als Fehler auf,
+sondern als stilles Null-Ergebnis. Das ist die schlimmste Art von
+Datenfehler, weil sie wie ein legitimes „keine Punkte" aussieht.
+
+**Warum die Saison im Schlüssel steht:** das Reglement erscheint jährlich
+und die Skalen ändern sich. Ein späterer Jahrgang **ergänzt**, er
+überschreibt nicht.
+
+**Gefüllt wird aus der CSV, nicht aus der Migration.** `app/uci_punkte.py`
+liest `docs/uci-punkte-<saison>.csv` beim Start. Die Zahlen stehen damit
+genau einmal im Repository. Der Loader findet neue Jahrgänge über das
+Dateinamensmuster — eine CSV für 2027 hinzuzufügen genügt, ohne
+Codeänderung.
+
+**Der Hash-Merker ist kein Luxus.** Eine Instanz auf Renders kostenlosem
+Plan startet mehrmals pro Stunde neu (gemessen, siehe Migration 0007). Ohne
+Merker würden bei jedem Aufwachen 1564 Zeilen geschrieben — genau die
+Verschwendung, die der Saison-Takt an anderer Stelle beseitigt hat.
+Gleicher SHA-256: der Loader tut nichts.
+
+**`rider_season_points.uci_points` ist jetzt `NUMERIC(8,2)`.**
+Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt; ein Fahrer
+kann 12,86 Punkte haben, und `INTEGER` hätte das stillschweigend gerundet.
+`INTEGER` → `NUMERIC` ist verlustfrei, die Migration ist also nach der Regel
+in `backend/README.md` auch ohne Backup zulässig. Sie meldet zusätzlich per
+`RAISE NOTICE`, wie viele Zeilen überhaupt einen Wert hatten.
+
+### `race_id IS NULL` ist die eigentliche Aussage
+
+`uci_rennstufe.rennen_reglement` ist der Name **wie er im Reglement steht**,
+unverändert. `race_id` ist `NULL`, solange die Zuordnung nicht gesetzt
+wurde — und der Loader lässt eine gesetzte `race_id` unberührt.
+
+Das ist Absicht. Der Reglement-Name lässt sich nicht verlässlich auf
+`races.id` abbilden: das Reglement selbst schreibt **„Oomlop Nieuwsblad"**
+für Omloop Nieuwsblad im Frauen-Gesamtklassement und führt „Lloyds Tour of
+Britain Women" in der Trikot-Tabelle ohne das „Women". Ein Namensabgleich
+würde bei jeder Umbenennung still falsche Punkte liefern („In Flanders
+Fields - From Middelkerke to Wevelgem" hieß früher Gent–Wevelgem).
+
+Der Unterschied ist: „wir wissen, dass 121 Zuordnungen fehlen" statt „die
+Punkte sind irgendwie zu niedrig". Die offene Zahl ist abfragbar
+(`WHERE race_id IS NULL`) und steht in jeder Loader-Meldung.
+
+### Prüfen
+
+```bash
+DATABASE_URL=postgresql://... python3 scripts/check-uci-reglement.py
 ```
 
-`anlass` gehört als vierte Achse nach `app/taxonomy.py`, neben `gender`,
-`category` und `circuit` — als `Literal[...]`, aus dem die Werte per
-`get_args()` abgeleitet werden, und der CHECK in der Migration aus
-derselben Quelle. Sonst stünde das Vokabular in der Datenbank, im Modell
-und im Frontend je einmal, und `scripts/check-vokabular.py` würde es
-melden. `stufe` dagegen **nicht**: die Stufen sind saisonabhängige Daten,
-kein Vokabular.
+21 Prüfungen gegen ein echtes Postgres, eine **leere** Datenbank genügt
+(das Skript wendet die Migrationen selbst an): Tabellenform und der neue
+Spaltentyp, der erste Ladevorgang gegen die Zeilenzahlen der CSV, **der
+zweite Ladevorgang tut nichts** (der eigentliche Punkt), eine von Hand
+gesetzte `race_id` übersteht einen Reload mit geänderter Datei, ein aus der
+CSV entfernter Wert verschwindet auch aus der Datenbank, die Fremdschlüssel
+und CHECKs greifen, und 12,86 Punkte bleiben 12,86.
 
-### Drei Fallstricke
+Gegengeprüft mit drei Manipulationen am Loader, jede bricht genau die
+zuständige Prüfung: Hash-Merker entfernt → „nichts geladen" scheitert;
+`race_id` überschreiben → „race_id nicht überschrieben" scheitert;
+Löschen veralteter Zeilen ausgebaut → „aus der CSV entfernter Wert ist auch
+weg" scheitert.
 
-**1. Die WorldTour-Stufe ist nicht aus der Rennkategorie ableitbar.** Sie
-ist eine Liste **namentlich genannter Rennen**, und die Zusammensetzung
-ändert sich jede Saison. Über den Namen zuordnen geht auch nicht: das
-Reglement selbst schreibt „Omloop Nieuwsblad" im Gesamtklassement der
-Frauen als **„Oomlop Nieuwsblad"**, und „Lloyds Tour of Britain Women"
-in der Trikot-Tabelle als „Lloyds Tour of Britain". Beide Schreibweisen
-stehen unverändert in der CSV — sie sind die Quelle, nicht der Fehler. Die
-Zuordnung braucht deshalb eine `race_id`, die von Hand oder halbautomatisch
-einmal pro Saison gesetzt wird. Ein Namensabgleich würde bei jeder
-Umbenennung still falsche Punkte liefern („In Flanders Fields - From
-Middelkerke to Wevelgem" hieß früher Gent–Wevelgem).
+**Eine Korrektur am Prüf-Gerüst war nötig.** `scripts/check-migrations.sh`
+verglich in Schritt 3 („kein bestehender Spaltenwert verändert") die
+**Textdarstellung** der Zeilen, nicht deren Wert. Die verlustfreie
+Typerweiterung macht aus `5` ein `5.00`, und der Test schlug an — obwohl
+sich kein Wert geändert hatte. Der Vergleich normalisiert Zahlspalten jetzt
+mit `trim_scale(...::numeric)`, misst damit den Wert statt seiner Schreibweise
+und bleibt scharf: eine Testmigration, die `uci_points` auf 999 setzt, lässt
+ihn nach wie vor scheitern (gegengeprüft).
 
-**2. Die heutige Taxonomie reicht nicht.**
-`taxonomy.Category` kennt `wt | proseries | continental`. Die Punkteskala
-unterscheidet im Kontinentalkalender aber **Class 1**, **Class 2** und
-**1.2U/2.2U** — auf Platz 1 sind das 125, 40 und 30 Punkte, also ein
-Faktor 4. Alle drei landen heute in `continental`. Solange das so ist,
-lassen sich für Rennen des Kontinentalkalenders **keine** Punkte
-berechnen. Das ist eine echte Schema-Lücke, keine Bequemlichkeit.
+## Selbst berechnen: was dafür noch fehlt
 
-**3. `rider_season_points.uci_points` ist `INTEGER`.**
-Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt. Sobald
-ein Fahrer 12,86 Punkte hat, ist die Spalte zu grob — sie braucht
-`NUMERIC(8,2)`. Das ist eine Typänderung an einer Bestandsspalte, also nach
-der Regel in `backend/README.md` („Kein Backup, und was das für Migrationen
-heisst") erlaubt, solange nichts verloren geht: `INTEGER` → `NUMERIC` ist
-verlustfrei. Die Spalte ist ausserdem heute noch überall `NULL`.
+Die vier Tabellen halten das **Reglement**. Für eine eigene Berechnung
+braucht es die **Ergebnisse** in einer Tiefe, die das Projekt nur teilweise
+hat. Bestandsaufnahme je Anlass:
 
-### Was das Schema noch nicht abdeckt
+| `anlass` | braucht | Stand |
+|---|---|---|
+| `gc` | Endstand des Gesamtklassements + Stufe des Rennens | Ergebnisse **ja** (`race_results` mit `stage_id IS NULL`). Stufe: Tabelle da, `race_id` überall `NULL` |
+| `etappe` | Ergebnis je Etappe | **ja** — `race_stages` + `race_results.stage_id` werden gescraped |
+| `nebenklassement` | Endstand Punkte- und Bergwertung | **nein**, gar nicht modelliert |
+| `trikot` | wer an welchem Tag welches Trikot **getragen** hat | **nein**, gar nicht modelliert — und vorher die offene Frage oben klären |
+| `kk_gc`, `kk_etappe`, `kk_trikot` | wie oben, plus Unterscheidung Class 1 / Class 2 / 1.2U | **nein** — `taxonomy.Category` kennt nur `continental` für alle drei |
+| `nat_meisterschaft` | Ergebnisse nationaler Meisterschaften + Kategorie A/B je Nation (hängt vom Vorjahr ab) | **nein** — diese Rennen sind nicht im Kalender |
+| `kont_meisterschaft` | Ergebnisse der Kontinentalmeisterschaften und -spiele | **nein** — nicht im Kalender |
+| `wm_olympia` | Ergebnisse von WM und Olympia | **nein** — nicht im Kalender |
+| `ttt_kont`, `mixed_relay_kont`, `mixed_relay_wm` | Liste der **Zielankömmlinge je Team**, für die Teilung auf 1/100 | **nein** |
 
-Die Tabellen oben halten das **Reglement**. Für eine eigene Berechnung
-fehlen die Ergebnisse in einer Tiefe, die das Projekt heute nicht hat:
-Etappenergebnisse einzeln, Nebenklassements, wer welches Trikot an welchem
-Tag getragen hat, und bei Mannschaftszeitfahren die Liste der
-Zielankömmlinge. Ein **Import** fertiger Punktzahlen braucht davon nichts —
-er schreibt nur in `rider_season_points`. Der Unterschied ist erheblich,
-und die Entscheidung zwischen beiden Wegen sollte vor dem ersten Schema
-fallen, nicht danach.
+Der Kalender wird über `taxonomy.achsen_kombinationen()` geseedet, also
+über WorldTour, ProSeries und die fünf Kontinental-Circuits. Nationale
+Meisterschaften, Kontinentalmeisterschaften, WM und Olympia sind damit
+**gar nicht** erfasst — sechs der dreizehn Anlässe haben heute keine
+Quelle.
+
+### Was sich damit heute schon rechnen lässt
+
+**WorldTour-Gesamtklassement und WorldTour-Etappen** — sobald die 121
+`race_id`-Zuordnungen gesetzt sind. Das sind bei den Männern die Stufen
+`gc1`–`gc5` und `et1`–`et4`, also der größte Teil der Punkte der
+Spitzenfahrer. Nicht die ganze Rangliste, aber ein nachrechenbarer,
+prüfbarer Anfang.
+
+### Die Reihenfolge, die ich vorschlagen würde
+
+1. **Die 121 `race_id` zuordnen** (halbautomatisch: Vorschläge per
+   Namensähnlichkeit, Bestätigung von Hand). Danach sind `gc` und `etappe`
+   für die WorldTour rechenbar.
+2. **Die Berechnung für `gc` und `etappe`** bauen, inklusive der Ausfallregel
+   aus 2.6.001, und gegen eine veröffentlichte Rangliste gegenprüfen. Erst
+   dieser Vergleich zeigt, ob die Kette stimmt.
+3. **`taxonomy.Category` erweitern** um Class 1, Class 2 und 1.2U/2.2U.
+   Das ist ein eigener Schritt mit eigenem Risiko: der Scraper setzt die
+   Kategorie, Migration 0003 hat einen CHECK darauf, und das Frontend
+   übersetzt sie für die Anzeige.
+4. **Trikot und Nebenwertungen** — erst wenn die beiden offenen
+   Reglement-Fragen geklärt sind.
+5. **Meisterschaften, WM, Olympia** — eigener Kalender-Zweig, eigene
+   Scraper-Arbeit.
+
+Schritt 1 und 2 sind zusammen überschaubar. Schritt 5 ist ein Projekt für
+sich.

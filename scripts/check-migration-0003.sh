@@ -20,6 +20,10 @@ cd "$(dirname "$0")/.."
 export PGHOST PGPORT PGUSER
 fehler=0
 LOG=$(mktemp); trap 'rm -f "$LOG"' EXIT
+
+# Gemeinsamer Wertevergleich (eine Kopie statt drei).
+source "$(dirname "$0")/_datenvergleich.sh"
+
 meld()   { printf '  %-62s %s\n' "$1" "$2"; }
 pruefe() { if [ "$2" = "$3" ]; then meld "$1" "ok"; else meld "$1" "FEHLER: '$2' != '$3'"; fehler=$((fehler+1)); fi; }
 neu()    { psql -q -c "DROP DATABASE IF EXISTS $1;" -c "CREATE DATABASE $1;" postgres >/dev/null; }
@@ -56,13 +60,9 @@ spalten() {
     FROM information_schema.columns WHERE table_schema='public'
       AND table_name <> 'schema_migrations' GROUP BY table_name ORDER BY table_name"
 }
-md5s() {
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    local t=${spec%%:*} cols=${spec#*:}
-    echo "$t $(psql -tA -d tax_daten -c "SELECT md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),'')) FROM (SELECT $cols FROM $t) x")"
-  done <<< "$1"
-}
+# Wertevergleich gemeinsam mit check-migrations.sh und -0002.sh, siehe
+# scripts/_datenvergleich.sh.
+md5s() { vergleich_md5 tax_daten "$1"; }
 zaehle() { psql -tA -d tax_daten -c "SELECT (SELECT count(*) FROM teams)||'/'||(SELECT count(*) FROM races)||'/'||(SELECT count(*) FROM race_history_seed_log)"; }
 sp=$(spalten); vorher=$(zaehle); vorher_md5=$(md5s "$sp")
 pruefe "Testdaten eingespielt (teams/races/seedlog)" "$vorher" "2/3/3"

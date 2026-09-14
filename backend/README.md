@@ -420,18 +420,33 @@ Wofür die UCI überhaupt Punkte vergibt, steht jetzt nachprüfbar im Repo:
 Straßen-Reglemente, `docs/uci-punkte-2026-wt-stufen.csv` mit der Zuordnung
 Rennen → Stufe). Geprüft mit `python3 scripts/check-uci-punkte.py`.
 
-Drei Ergebnisse daraus, die dieses Backend betreffen:
+Die Punkte werden **selbst berechnet**, nicht importiert. Migration 0008
+legt dafür das Reglement in die Datenbank: `uci_stufe`, `uci_punkte`,
+`uci_rennstufe` und `uci_quelle`. Gefüllt werden sie von
+`app/uci_punkte.py` beim Start — aus der CSV, damit die Zahlen genau
+einmal im Repository stehen, und nur wenn sich deren SHA-256 geändert hat
+(sonst würden bei jedem Aufwachen 1564 Zeilen geschrieben, siehe Migration
+0007).
 
-1. **Männer- und Frauenskala sind zahlengleich** (belegt, nicht vermutet —
-   eine der 14 Prüfungen). Eine Punktetabelle mit `gender`-Spalte, keine
-   zwei Tabellen.
-2. **`taxonomy.Category` reicht für eine Berechnung nicht.** Die Skala
-   unterscheidet im Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U —
-   auf Platz 1 sind das 125, 40 und 30 Punkte. Alle drei landen heute in
-   `continental`.
-3. **`rider_season_points.uci_points` ist `INTEGER`.**
-   Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt; die
-   Spalte braucht `NUMERIC(8,2)`, sobald echte Werte kommen.
+`rider_season_points.uci_points` ist damit `NUMERIC(8,2)` statt `INTEGER`:
+Mannschaftszeitfahren-Punkte werden auf ein Hundertstel geteilt
+(Art. 2.10.008), ein Fahrer kann 12,86 Punkte haben.
+
+Zwei Dinge, die für eine Berechnung noch fehlen:
+
+1. **`uci_rennstufe.race_id` ist überall `NULL`.** Der Reglement-Name
+   lässt sich nicht auf `races.id` abbilden — das Reglement schreibt
+   „Oomlop Nieuwsblad" für Omloop Nieuwsblad. Die 121 Zuordnungen sind ein
+   eigener, bewusster Schritt; bis dahin ist die Lücke abfragbar statt
+   unsichtbar.
+2. **`taxonomy.Category` reicht nicht.** Die Skala unterscheidet im
+   Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U — auf Platz 1 sind
+   das 125, 40 und 30 Punkte. Alle drei landen heute in `continental`.
+
+Sechs der dreizehn Anlässe haben ausserdem gar keine Quelle: nationale
+Meisterschaften, Kontinentalmeisterschaften, WM und Olympia stehen nicht
+im Kalender, der über `taxonomy.achsen_kombinationen()` geseedet wird.
+Die vollständige Bestandsaufnahme steht in `docs/uci-punkte.md`.
 
 **Render-Postgres-Free-Tier-Hinweis:** die kostenlose Datenbank läuft nach
 30 Tagen ab (`expiresAt` bei Erstellung) und wird dann von Render gelöscht,
@@ -1079,6 +1094,16 @@ einer externen Datei lagen, scheiterte das Einspielen einmal still, und
 die Vergleiche verglichen 0 Zeilen mit 0 Zeilen und bestanden scheinbar.
 Das Skript bricht jetzt ab, wenn keine Testdaten drin sind.
 
+Der Wertevergleich („kein bestehender Spaltenwert verändert") steht in
+**`scripts/_datenvergleich.sh`** und wird von den drei Skripten eingebunden,
+die ihn brauchen. Vorher lag er dort in drei Kopien unter drei Namen, und
+Migration 0008 hat gezeigt, was das kostet: die verlustfreie Typerweiterung
+`INTEGER` → `NUMERIC(8,2)` liess zwei der drei Kopien scheitern. Der
+Vergleich normalisiert Zahlspalten jetzt mit `trim_scale(...::numeric)` und
+misst damit den **Wert** statt seiner Textdarstellung (`5` gegen `5.00`) —
+eine echte Änderung bleibt sichtbar, gegengeprüft in allen drei Skripten mit
+einer Testmigration, die einen Wert überschreibt.
+
 Je Migration gibt es zusätzlich ein eigenes Skript, das die fachliche
 Wirkung prüft statt nur den Ablauf:
 
@@ -1089,6 +1114,7 @@ PGPORT=5599 ./scripts/check-migration-0004.sh   # Ergebnis-IDs
 PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
 PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
 DATABASE_URL=... python3 scripts/check-kadenz.py # Migration 0007 + Saison-Kadenz
+DATABASE_URL=... python3 scripts/check-uci-reglement.py  # Migration 0008 + Loader
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 python3 scripts/check-uci-punkte.py             # UCI-Punkteskalen unter docs/
 ```
