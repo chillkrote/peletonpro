@@ -1,0 +1,122 @@
+geschlecht,anlass,stufe,rennen
+m,etappe,et1,Tour de France
+m,etappe,et2,Giro d'Italia
+m,etappe,et2,La Vuelta Ciclista a España
+m,etappe,et3,Paris - Nice
+m,etappe,et3,Santos Tour Down Under
+m,etappe,et3,Tirreno - Adriatico
+m,etappe,et3,Tour Auvergne - Rhône-Alpes
+m,etappe,et3,Tour de Romandie
+m,etappe,et3,Tour de Suisse
+m,etappe,et3,UAE Tour
+m,etappe,et4,Itzulia Basque Country
+m,etappe,et4,Renewi Tour
+m,etappe,et4,Tour de Pologne
+m,etappe,et4,Tour of Guangxi
+m,etappe,et4,Volta Ciclista a Catalunya
+m,gc,gc1,Tour de France
+m,gc,gc2,Giro d'Italia
+m,gc,gc2,La Vuelta Ciclista a España
+m,gc,gc3,Il Lombardia
+m,gc,gc3,Liège-Bastogne-Liège
+m,gc,gc3,Milano-Sanremo
+m,gc,gc3,Paris-Roubaix
+m,gc,gc3,Ronde van Vlaanderen-Tour des Flandres
+m,gc,gc4,Amstel Gold Race
+m,gc,gc4,Grand Prix Cycliste de Montréal
+m,gc,gc4,Grand Prix Cycliste de Québec
+m,gc,gc4,In Flanders Fields - From Middelkerke to Wevelgem
+m,gc,gc4,La Flèche Wallonne
+m,gc,gc4,Paris - Nice
+m,gc,gc4,Santos Tour Down Under
+m,gc,gc4,Strade Bianche
+m,gc,gc4,Tirreno - Adriatico
+m,gc,gc4,Tour Auvergne - Rhône-Alpes
+m,gc,gc4,Tour de Romandie
+m,gc,gc4,Tour de Suisse
+m,gc,gc4,UAE Tour
+m,gc,gc5,ADAC Cyclassics
+m,gc,gc5,Bretagne Classic - CIC
+m,gc,gc5,Copenhagen Sprint
+m,gc,gc5,DSSK (Donostia San Sebastian Klasikoa)
+m,gc,gc5,Dwars door Vlaanderen - A travers la Flandre
+m,gc,gc5,E3 Saxo Classic
+m,gc,gc5,Eschborn-Frankfurt
+m,gc,gc5,Itzulia Basque Country
+m,gc,gc5,Mapei Cadel Evans Great Ocean Road Race
+m,gc,gc5,Omloop Nieuwsblad
+m,gc,gc5,Renewi Tour
+m,gc,gc5,Ronde Van Brugge - Tour of Bruges
+m,gc,gc5,Tour de Pologne
+m,gc,gc5,Tour of Guangxi
+m,gc,gc5,Volta Ciclista a Catalunya
+m,nebenklassement,nk1,Tour de France
+m,nebenklassement,nk2,Giro d'Italia
+m,nebenklassement,nk2,La Vuelta Ciclista a España
+m,trikot,tr1,Tour de France
+m,trikot,tr2,Giro d'Italia
+m,trikot,tr2,La Vuelta Ciclista a España
+m,trikot,tr3,Paris - Nice
+m,trikot,tr3,Santos Tour Down Under
+m,trikot,tr3,Tirreno - Adriatico
+m,trikot,tr3,Tour Auvergne - Rhône-Alpes
+m,trikot,tr3,Tour de Romandie
+m,trikot,tr3,Tour de Suisse
+m,trikot,tr3,UAE Tour
+m,trikot,tr4,Itzulia Basque Country
+m,trikot,tr4,Renewi Tour
+m,trikot,tr4,Tour de Pologne
+m,trikot,tr4,Tour of Guangxi
+m,trikot,tr4,Volta Ciclista a Catalunya
+w,etappe,et1,Tour de France Femmes avec Zwift
+w,etappe,et2,Giro d'Italia Women
+w,etappe,et2,Vuelta España Femenina by Carrefour.es
+w,etappe,et3,Santos Tour Down Under
+w,etappe,et3,Tour de Romandie Féminin
+w,etappe,et3,Tour de Suisse Women
+w,etappe,et3,UAE Tour Women
+w,etappe,et4,Itzulia Women
+w,etappe,et4,Lloyds Tour of Britain Women
+w,etappe,et4,Tour of Chongming Island
+w,etappe,et4,Vuelta a Burgos Feminas
+w,gc,gc1,Tour de France Femmes avec Zwift
+w,gc,gc2,Giro d'Italia Women
+w,gc,gc2,Vuelta España Femenina by Carrefour.es
+w,gc,gc3,Liège-Bastogne-Liège Femmes
+w,gc,gc3,Milano-Sanremo
+w,gc,gc3,Paris-Roubaix Femmes Hauts-de-France
+w,gc,gc3,Ronde van Vlaanderen
+w,gc,gc4,Amstel Gold Race Ladies Edition
+w,gc,gc4,In Flanders Fields - In Wevelgem
+w,gc,gc4,La Fleche Wallonne Feminine
+w,gc,gc4,Santos Tour Down Under
+w,gc,gc4,Strade Bianche Donne
+w,gc,gc4,Tour de Romandie Féminin
+w,gc,gc4,Tour de Suisse Women
+w,gc,gc4,Trofeo Alfredo Binda - Comune di Cittiglio
+w,gc,gc4,UAE Tour Women
+w,gc,gc5,Classic Lorient Agglomération
+w,gc,gc5,Copenhagen Sprint
+w,gc,gc5,Dwars door Vlaanderen / A travers la Flandre
+w,gc,gc5,Itzulia Women
+w,gc,gc5,Lloyds Tour of Britain Women
+w,gc,gc5,Mapei Cadel Evans Great Ocean Road Race
+w,gc,gc5,Oomlop Nieuwsblad
+w,gc,gc5,Ronde Van Brugge - Tour of Bruges
+w,gc,gc5,Tour of Chongming Island
+w,gc,gc5,Tour of Guangxi Women's WorldTour
+w,gc,gc5,Vuelta a Burgos Feminas
+w,nebenklassement,nk1,Tour de France Femmes avec Zwift
+w,nebenklassement,nk2,Giro d'Italia Women
+w,nebenklassement,nk2,Vuelta España Femenina by Carrefour.es
+w,trikot,tr1,Tour de France Femmes avec Zwift
+w,trikot,tr2,Giro d'Italia Women
+w,trikot,tr2,Vuelta España Femenina by Carrefour.es
+w,trikot,tr3,Santos Tour Down Under
+w,trikot,tr3,Tour de Romandie Féminin
+w,trikot,tr3,Tour de Suisse Women
+w,trikot,tr3,UAE Tour Women
+w,trikot,tr4,Itzulia Women
+w,trikot,tr4,Lloyds Tour of Britain
+w,trikot,tr4,Tour of Chongming Island
+w,trikot,tr4,Vuelta a Burgos Feminas
