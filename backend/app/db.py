@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Iterator, Optional, Sequence
 
 import psycopg
@@ -552,6 +553,34 @@ def set_rider_qid(rider_id: str, qid: str) -> bool:
             qid, rider_id,
         )
         return False
+
+
+def letzter_joblauf(job: str) -> Optional[datetime]:
+    """Wann der Job das letzte Mal erfolgreich war - None, wenn noch nie.
+
+    Grundlage der Fälligkeitsprüfung in app/kadenz.py. Der Grund, warum die
+    Zeit aus der Datenbank kommt und nicht aus der Prozesslaufzeit, steht in
+    Migration 0007: eine Instanz auf dem Free-Plan startet mehrmals pro
+    Stunde neu, und APScheduler führt bei jedem Start jeden Job einmal aus."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT last_success FROM job_runs WHERE job = %s", (job,)
+        ).fetchone()
+    return row["last_success"] if row else None
+
+
+def joblauf_vermerken(job: str) -> None:
+    """Vermerkt einen erfolgreichen Lauf. Nur bei Erfolg aufrufen: ein
+    fehlgeschlagener Lauf, der hier landet, sperrt den Job für den ganzen
+    Takt - und das kann ein Monat sein."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO job_runs (job, last_success) VALUES (%s, now())
+            ON CONFLICT (job) DO UPDATE SET last_success = now()
+            """,
+            (job,),
+        )
 
 
 def ensure_season_point_placeholders() -> int:
