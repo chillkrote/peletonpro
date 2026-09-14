@@ -28,6 +28,10 @@ BASIS="postgresql://${PGUSER}@${PGHOST}:${PGPORT}"
 MIG="backend/migrations"
 fehler=0
 
+
+# Gemeinsamer Wertevergleich (eine Kopie statt drei).
+source "$(dirname "$0")/_datenvergleich.sh"
+
 meld()  { printf '  %-62s %s\n' "$1" "$2"; }
 pruefe() { if [ "$2" = "$3" ]; then meld "$1" "ok"; else meld "$1" "FEHLER: $2 != $3"; fehler=$((fehler+1)); fi; }
 
@@ -58,14 +62,9 @@ spalten_merken() {
     WHERE table_schema='public' AND table_name <> 'schema_migrations'
     GROUP BY table_name ORDER BY table_name"
 }
-daten_md5() {
-  local db=$1 spalten=$2
-  while IFS= read -r spec; do
-    [ -n "$spec" ] || continue
-    local t=${spec%%:*} cols=${spec#*:}
-    echo "$t $(psql -tA -d "$db" -c "SELECT md5(coalesce(string_agg(x::text,'|' ORDER BY x::text),'')) FROM (SELECT $cols FROM $t) x")"
-  done <<< "$spalten"
-}
+# Der Wertevergleich steht in scripts/_datenvergleich.sh - gemeinsam mit
+# check-migration-0002.sh und -0003.sh, siehe dort.
+daten_md5() { vergleich_md5 "$1" "$2"; }
 schema_abbild() {
   psql -tA -d "$1" -c "
     SELECT 'SPALTE '||table_name||'.'||column_name||' '||data_type||' null='||is_nullable

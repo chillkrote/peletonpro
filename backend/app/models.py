@@ -92,7 +92,11 @@ class RiderSeason(BaseModel):
     year: int
     team_name: str
     team_wiki_url: Optional[str] = None
-    uci_points: Optional[int] = None
+    # float, nicht int: Mannschaftszeitfahren-Punkte werden auf ein
+    # Hundertstel geteilt (Art. 2.10.008), ein Fahrer kann also 12,86
+    # Punkte haben. Die Spalte ist seit Migration 0008 NUMERIC(8,2);
+    # psycopg liefert Decimal, Pydantic wandelt in float.
+    uci_points: Optional[float] = None
 
 
 class RiderDetail(Rider):

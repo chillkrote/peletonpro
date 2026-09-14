@@ -13,6 +13,7 @@ from . import db
 from .config import CORS_ORIGINS, REQUIRE_DATABASE
 from .routers import export, news, race_history, riders, teams
 from .migrations import run_migrations
+from .uci_punkte import lade_reglement
 from .ratelimit import limiter
 from .routers.messages import INTERNAL_ERROR
 from .scheduler import start_scheduler
@@ -149,6 +150,12 @@ async def lifespan(app: FastAPI):
         run_migrations()
     except Exception as exc:  # noqa: BLE001 - App darf ohne DB weiterlaufen
         logger.error("Schema-Migrationen fehlgeschlagen: %s", exc)
+
+    # Das UCI-Punktereglement aus docs/ nachziehen. Tut nichts, wenn sich
+    # die CSV nicht geändert hat (Hash-Merker in uci_quelle) - wichtig,
+    # weil diese Instanz mehrmals pro Stunde neu startet. Nach den
+    # Migrationen, weil die Tabellen von 0008 kommen.
+    lade_reglement()
 
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den
