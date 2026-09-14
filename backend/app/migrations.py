@@ -64,6 +64,26 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 """
 
 
+def _notiz_ins_log(diagnose: psycopg.errors.Diagnostic) -> None:
+    """Server-NOTICEs einer Migration ins Anwendungslog.
+
+    Ohne Handler verwirft psycopg sie stillschweigend. Eine Migration konnte
+    damit abbrechen (RAISE EXCEPTION landet als Fehler im Log), aber nicht
+    BERICHTEN - und für einen Backfill ist das Berichten der Punkt: wie viele
+    Zeilen zugeordnet wurden, lässt sich nur an den echten Daten messen, und
+    der einzige Weg an die Produktionsdatenbank ist dieses Log (die Datenbank
+    nimmt keine externen Verbindungen an, siehe README).
+    """
+    nachricht = (diagnose.message_primary or "").strip()
+    if not nachricht:
+        return
+    schwere = (diagnose.severity_nonlocalized or diagnose.severity or "").upper()
+    if schwere in ("WARNING", "ERROR", "FATAL", "PANIC"):
+        logger.warning("Migration: %s", nachricht)
+    else:
+        logger.info("Migration: %s", nachricht)
+
+
 def _eigene_verbindung() -> psycopg.Connection:
     """Eine eigene Verbindung für den Migrationslauf, NICHT aus dem Pool.
 
@@ -81,7 +101,9 @@ def _eigene_verbindung() -> psycopg.Connection:
 
     Eine eigene Verbindung kostet hier nichts: der Lauf passiert einmal beim
     Start, und sie wird sofort wieder geschlossen."""
-    return psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row)
+    conn = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row)
+    conn.add_notice_handler(_notiz_ins_log)
+    return conn
 
 
 def _pruefsumme(text: str) -> str:

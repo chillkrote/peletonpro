@@ -109,8 +109,10 @@ def team_season_stats(
         team = db.get_team(team_id)
         if team is None:
             raise HTTPException(status_code=404, detail="Team nicht gefunden")
-        stats = db_races.get_team_season_stats(team["name"], season)
-        wins = db_races.get_team_season_wins(team["name"], season)
+        # Beides mitgeben: die ID trifft die zugeordneten Ergebniszeilen,
+        # der Name die noch nicht zugeordneten (siehe db_races._TEAM_TREFFER).
+        stats = db_races.get_team_season_stats(team["id"], team["name"], season)
+        wins = db_races.get_team_season_wins(team["id"], team["name"], season)
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001

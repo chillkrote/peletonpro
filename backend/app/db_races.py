@@ -228,6 +228,32 @@ def replace_race_details(
                     (race_id, stage_id, result.position, result.rider, result.team, result.time_or_gap),
                 )
 
+        # rider_id/team_id nachtragen - über DIESELBE Datenbankfunktion, die
+        # Migration 0004 für den Bestand benutzt (siehe dort für die vier
+        # Zuordnungsschritte und warum nichts geraten wird). Stünde die Regel
+        # hier ein zweites Mal als Python, liefe sie mit der Migration
+        # auseinander, sobald eine der beiden nachgeschärft wird.
+        #
+        # Der Aufruf ist auf dieses Rennen begrenzt und läuft in derselben
+        # Transaktion wie die Ergebniszeilen: entweder stehen Ergebnisse mit
+        # Zuordnung da, oder keine.
+        #
+        # Nebenwirkung, die erwünscht ist: wird ein Rennen erneut gescrapt,
+        # bekommen Zeilen eine ID, die beim ersten Mal keine bekamen - etwa
+        # weil der Fahrer damals noch nicht in `riders` stand.
+        zuordnung = conn.execute(
+            "SELECT schritt_a, schritt_b, schritt_c, schritt_d "
+            "FROM race_results_ids_nachtragen(%s)",
+            (race_id,),
+        ).fetchone()
+    if zuordnung and any(zuordnung.values()):
+        logger.debug(
+            "Zuordnung %s: rider_id %d, team_id %d (Teamname %d, Station %d, Altname %d)",
+            race_id, zuordnung["schritt_a"],
+            zuordnung["schritt_b"] + zuordnung["schritt_c"] + zuordnung["schritt_d"],
+            zuordnung["schritt_b"], zuordnung["schritt_c"], zuordnung["schritt_d"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # Lesezugriff (API)
@@ -454,16 +480,39 @@ def get_races_missing_details_count() -> int:
 # Teams im selben Rennen ergaben einen.
 
 
-def get_team_season_stats(team_name: str, season: int) -> dict:
+# Ein Team wird in seinen Ergebniszeilen auf zwei Wegen erkannt:
+#
+#   res.team_id = %(team_id)s        die Zuordnung aus Migration 0004
+#   res.team_id IS NULL AND res.team_name = %(team_name)s
+#
+# Der zweite Weg ist der alte Vergleich und bleibt als Rückfall für Zeilen,
+# die sich nicht zuordnen liessen. Die beiden Bedingungen können sich nicht
+# überlappen (die eine verlangt eine gesetzte team_id, die andere keine),
+# es wird also nichts doppelt gezählt.
+#
+# Vorher stand hier NUR der Namensvergleich, und das war Befund 18: ein
+# umbenanntes Team - "Jumbo-Visma" wurde "Team Visma-Lease a Bike" - verlor
+# damit seine ganze Historie, ohne dass ein Fehler auftauchte. Die Seite
+# zeigte einfach null Siege für die Jahre davor.
+_TEAM_TREFFER = """(
+        res.team_id = %(team_id)s
+        OR (res.team_id IS NULL AND res.team_name = %(team_name)s)
+    )"""
+
+
+def get_team_season_stats(team_id: str, team_name: str, season: int) -> dict:
     """Siege, Podestplätze und Top-10-Platzierungen eines Teams in einer
     Saison, gezählt über alle Ergebniszeilen (Gesamtwertungen UND Etappen).
 
     `races` nennt zusätzlich die Zahl der Rennen, in denen das Team
     überhaupt platziert war - das ist die Zahl, die die frühere
-    Browser-Berechnung faelschlich als "Top-10-Platzierungen" auswies."""
+    Browser-Berechnung faelschlich als "Top-10-Platzierungen" auswies.
+
+    Braucht beides: `team_id` für die zugeordneten Zeilen, `team_name` für
+    den Rückfall (siehe _TEAM_TREFFER)."""
     with _connect() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT
                 count(*) FILTER (WHERE res.position = 1)  AS wins,
                 count(*) FILTER (WHERE res.position <= 3) AS podiums,
@@ -471,31 +520,32 @@ def get_team_season_stats(team_name: str, season: int) -> dict:
                 count(DISTINCT res.race_id)               AS races
             FROM race_results res
             JOIN races r ON r.id = res.race_id
-            WHERE r.season = %s AND res.team_name = %s
+            WHERE r.season = %(season)s AND {_TEAM_TREFFER}
             """,
-            (season, team_name),
+            {"season": season, "team_id": team_id, "team_name": team_name},
         ).fetchone()
     return dict(row) if row else {"wins": 0, "podiums": 0, "top_ten": 0, "races": 0}
 
 
-def get_team_season_wins(team_name: str, season: int, limit: int = 50) -> list[dict]:
+def get_team_season_wins(team_id: str, team_name: str, season: int, limit: int = 50) -> list[dict]:
     """Die Siege eines Teams in einer Saison, für die Liste unter den
     Kennzahlen. Etappensiege sind enthalten und über `stage_number`
     unterscheidbar - bei einem Etappenrennen ist das der Unterschied
     zwischen einem Etappensieg und dem Gesamtsieg (stage_number IS NULL)."""
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT r.id AS race_id, r.name AS race_name, r.start_date,
                    s.stage_number, res.rider_name
             FROM race_results res
             JOIN races r ON r.id = res.race_id
             LEFT JOIN race_stages s ON s.id = res.stage_id
-            WHERE r.season = %s AND res.team_name = %s AND res.position = 1
+            WHERE r.season = %(season)s AND res.position = 1 AND {_TEAM_TREFFER}
             ORDER BY r.start_date DESC NULLS LAST, s.stage_number NULLS FIRST
-            LIMIT %s
+            LIMIT %(limit)s
             """,
-            (season, team_name, limit),
+            {"season": season, "team_id": team_id, "team_name": team_name,
+             "limit": limit},
         ).fetchall()
     return [
         {
@@ -534,7 +584,8 @@ def export_race_results():
     return stream_query(
         """
         SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
-               s.stage_number, res.position, res.rider_name, res.team_name, res.time_or_gap
+               s.stage_number, res.position, res.rider_name, res.rider_id,
+               res.team_name, res.team_id, res.time_or_gap
         FROM race_results res
         JOIN races r ON r.id = res.race_id
         LEFT JOIN race_stages s ON s.id = res.stage_id

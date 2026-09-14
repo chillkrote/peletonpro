@@ -711,6 +711,7 @@ Wirkung prüft statt nur den Ablauf:
 ```bash
 PGPORT=5599 ./scripts/check-migration-0002.sh   # Geschlechts-Dimension
 PGPORT=5599 ./scripts/check-migration-0003.sh   # Taxonomie
+PGPORT=5599 ./scripts/check-migration-0004.sh   # Ergebnis-IDs
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 ```
 
@@ -731,6 +732,45 @@ unterscheiden - die erste Fassung dieses Tests scheiterte genau daran und
 hätte sich durch Umformatieren beschwichtigen lassen. Im Syntaxbaum tauchen
 Kommentare und Docstrings nicht auf. Ein einzelner Wert bleibt erlaubt
 (`category="wt"` im Scraper ist ein Schreibvorgang, keine Aufzählung).
+
+### Kein Backup, und was das für Migrationen heisst
+
+Diese Datenbank hat keinen Rückweg. Zwei Gründe, beide gemessen, nicht
+vermutet:
+
+- Der **Free-Plan** bietet keine automatischen Backups.
+- Die **`ipAllowList` ist leer** (abgefragt über die Render-API). Render
+  lässt damit keine externen Verbindungen zu. Ein `pg_dump` von aussen ist
+  nicht möglich, egal von welchem Rechner - auch nicht mit der External
+  Database URL.
+
+Ein Render Cron Job für `app/backup.py` wäre der saubere Weg, ist aber
+kostenpflichtig; dieses Projekt soll vorerst kostenlos bleiben. Was bleibt:
+
+1. **Die sieben CSV-Exporte im Browser** herunterladen
+   (`/api/export/*.csv`). Sie gehen über den Webservice, der intern an die
+   Datenbank kommt, und brauchen kein lokales Werkzeug. Grenze: sie prüfen
+   ihre Zeilenzahlen nicht (siehe unten).
+2. **Eine IP im Render-Dashboard freischalten** und dann lokal dumpen. Das
+   öffnet die Datenbank nach aussen, solange die Regel steht.
+
+Die praktische Folge steht als Regel für jede Migration: **solange es
+keinen Rückweg gibt, darf eine Migration nur Dinge tun, die sich neu
+berechnen lassen.** Das heisst konkret:
+
+| erlaubt | nicht erlaubt ohne Dump |
+|---|---|
+| Spalte hinzufügen | Spalte löschen |
+| neue Spalte füllen | Bestandsspalte überschreiben |
+| Constraint setzen (und bei Verstoss abbrechen) | Werte umschreiben, damit ein Constraint passt |
+| Index anlegen | Primärschlüssel ändern |
+
+Die Migrationen 0002 (gender), 0003 (Taxonomie) und 0004 (Ergebnis-IDs)
+halten sich daran - keine von ihnen hat einen Bestandswert angefasst, und
+die Prüfskripte belegen das jeweils an einer befüllten Testdatenbank. Offen
+und ausdrücklich gesperrt sind damit Befund 7 Schritt 3 (`riders.id` auf die
+Wikidata-QID) und ein späteres `DROP` von `race_results.rider_name` /
+`team_name`.
 
 ### Bekannte Grenze des CSV-Exports (nicht des Backups)
 
@@ -889,9 +929,12 @@ nicht zu verantworten. Die Reihenfolge, wenn es soweit ist:
 1. QIDs für alle Fahrer füllen (Job-Lauf, rein additiv, kein Risiko) und
    prüfen, für wie viele keine QID zu finden ist - für die braucht es die
    Wikipedia-URL als Ersatzschlüssel.
-2. Vorher ein Dump: `cd backend && python -m app.backup dump` gegen die
-   External Database URL, von einem Rechner mit `pg_dump`. Kostet nichts
-   und ist der einzige Rückweg.
+2. Vorher ein Dump - und der ist **heute nicht möglich**: die
+   `ipAllowList` der Datenbank ist leer, sie nimmt also überhaupt keine
+   externen Verbindungen an. Ein `pg_dump` gegen die External Database URL
+   scheitert unabhängig davon, von welchem Rechner es kommt. Siehe "Kein
+   Backup, und was das für Migrationen heisst" - dort stehen die beiden
+   Wege, die bleiben.
 3. Migration, die `riders.id` auf die QID umstellt. `rider_team_stints` und
    `rider_season_points` brauchen dafür `ON UPDATE CASCADE` auf ihrem
    Fremdschlüssel - haben sie heute nicht, nur `ON DELETE CASCADE`. Das
@@ -1125,6 +1168,118 @@ braucht die Renn-Historie weiter; sie stehen jetzt in
 `RaceResultEntry` zurück statt eines `RiderResult`, das der einzige
 Aufrufer anschließend Feld für Feld umkopiert hat - zwei Modelle für
 dieselbe Sache, eines davon weg.
+
+### Ergebniszeilen: verknüpft statt nur beschriftet
+
+`race_results` kannte Fahrer und Team nur als Text:
+
+```sql
+rider_name TEXT NOT NULL,
+team_name  TEXT
+```
+
+Das ist der Rohwert aus der Wikipedia-Ergebnistabelle und mit nichts
+verbunden. Zwei Folgen:
+
+- Die Fahrer-Detailseite kann daraus nicht "seine Ergebnisse" zeigen
+  (Befund 8).
+- Die Team-Statistik verglich Zeichenketten: `res.team_name = teams.name`.
+  Wird ein Team umbenannt - „Jumbo–Visma" wurde „Team Visma–Lease a Bike" -
+  verliert es damit seine gesamte Historie, **ohne dass ein Fehler
+  auftaucht**. Die Seite zeigt einfach null Siege für die Jahre davor
+  (Befund 18).
+
+Migration 0004 legt `rider_id` und `team_id` daneben. Additiv: die
+Textspalten bleiben stehen, kein Bestandswert wird angefasst (Begründung
+unter „Kein Backup, und was das für Migrationen heisst").
+
+#### Vier Wege zur Zuordnung, und keiner rät
+
+Der nützlichste Schlüssel lag schon da: `rider_team_stints.team_id` ist über
+die **Wiki-URL** des Teams aufgelöst, nicht über den Namen. Die Tabelle weiß
+also, in welchem Jahr ein Fahrer bei welchem Team war - und unter welchem
+Namen dieses Team damals lief.
+
+| Schritt | Weg | löst |
+|---|---|---|
+| A | `riders.name` = `rider_name`, gleiches Geschlecht | `rider_id` |
+| B | `teams.name` = `team_name`, gleiches Geschlecht | heutige Teamnamen |
+| C | Station des Fahrers in der Saison des Rennens | Schreibvarianten („Team Jumbo Visma" gegen „Jumbo–Visma") |
+| D | Abbildung „Stationsname → team_id" | alte Namen, auch bei unbekannten Fahrern |
+
+Jeder Schritt setzt eine ID **nur bei eindeutigem Treffer**
+(`HAVING count(...) = 1`). Zwei mögliche Treffer heißen `NULL`. Eine falsche
+Zuordnung wäre schlimmer als keine: sie sieht wie ein Ergebnis aus. Deshalb
+bleibt auch ein Fahrer, der mitten in der Saison gewechselt ist, für Schritt
+C ohne Team.
+
+#### Die Regel steht einmal, in der Datenbank
+
+Sie gilt für zwei Dinge: den Bestand (einmal) und jedes künftig gescrapte
+Ergebnis (bei jedem Schreiben). Stünde sie zweimal - als Backfill im
+SQL und als Python in `db_races.py` -, liefen die beiden auseinander, sobald
+eine Regel nachgeschärft wird. Genau die Doppelung, die dieses Projekt
+vermeiden will.
+
+Sie steht deshalb als Datenbankfunktion `race_results_ids_nachtragen`: ohne
+Argument für alle Zeilen, mit `race_id` für eines. Migration 0004 ruft sie
+für den Bestand, `db_races.replace_race_details` für das Rennen, das es
+gerade geschrieben hat - in derselben Transaktion wie die Ergebniszeilen.
+Eine Änderung der Regel ist damit eine neue Migration, die die Funktion
+ersetzt, und gilt sofort für beide Aufrufer.
+
+Nebenwirkung, die erwünscht ist: wird ein Rennen erneut gescrapt, bekommen
+Zeilen eine ID, die beim ersten Mal keine bekamen - etwa weil der Fahrer
+damals noch nicht in `riders` stand.
+
+#### Wie die Statistik jetzt zählt
+
+```sql
+res.team_id = %(team_id)s
+OR (res.team_id IS NULL AND res.team_name = %(team_name)s)
+```
+
+Der zweite Zweig ist der alte Namensvergleich und bleibt als Rückfall für
+nicht zugeordnete Zeilen. Überlappen können die beiden nicht (einer verlangt
+eine gesetzte `team_id`, der andere keine), es wird also nichts doppelt
+gezählt. Nachgemessen: mit gesetzten IDs liefern beide Statistik-Endpunkte
+**byte-identische** Antworten wie vorher, wo der Name schon traf - der
+Unterschied entsteht nur da, wo er nicht traf.
+
+#### Was die Abdeckung realistisch ist
+
+`riders` enthält nur die Kader der aktuellen 18 WorldTeams (517 Fahrer).
+`race_results` reicht über alle Saisons seit 2020 und enthält ProSeries und
+Continental - also tausende Namen von Fahrern, die nie in einem WorldTeam
+waren oder längst aufgehört haben. **`rider_id` bleibt deshalb für die
+Mehrheit der Zeilen `NULL`**, und das ist die Datenlage, kein Fehler des
+Backfills. Genau darum sind die Spalten nullable, die Fremdschlüssel
+`ON DELETE SET NULL` (ein gelöschter Fahrer darf die Ergebniszeile nicht
+mitnehmen - das Ergebnis ist auch ohne ihn ein Fakt) und die Indizes
+partiell (`WHERE ... IS NOT NULL`).
+
+Die echten Zahlen liess sich hier nicht messen: die Datenbank nimmt keine
+externen Verbindungen an. Die Migration berichtet sie deshalb selbst per
+`RAISE NOTICE`, und `app/migrations.py` hat dafür jetzt einen
+Notice-Handler - vorher verwarf psycopg Server-Meldungen stillschweigend,
+eine Migration konnte abbrechen, aber nicht berichten. Im Startlog steht
+nach dem Deploy:
+
+```
+0004: <n> Ergebniszeilen insgesamt
+0004: rider_id gesetzt bei <n> Zeilen (Schritt A: <n>)
+0004: team_id gesetzt bei <n> Zeilen (B Teamname: <n>, C Station: <n>, D Altname: <n>)
+```
+
+#### Was damit möglich wird, aber noch nicht gebaut ist
+
+Ein Endpunkt „Ergebnisse dieses Fahrers" über `rider_id` - das ist der
+eigentliche Nutzen für die Fahrer-Detailseite und neue API-Fläche, also ein
+eigener Schritt. Ebenso ein regelmässiger Aufruf von
+`race_results_ids_nachtragen()` ohne Argument, damit neu aufgenommene Fahrer
+alte Ergebnisse rückwirkend zugeordnet bekommen; das wäre ein
+Volltabellen-Durchlauf und will vorher auf der Free-Tier-Datenbank
+gemessen werden.
 
 ### Team-Statistik: richtig zählen statt im Browser raten
 
