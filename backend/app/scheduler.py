@@ -10,6 +10,8 @@ erfolgreiche Datenstand bleibt dabei erhalten: ein fehlgeschlagener Lauf
 schreibt einfach nicht.
 """
 import argparse
+import functools
+import inspect
 import logging
 import sys
 import time
@@ -48,6 +50,7 @@ from .scrapers.wikipedia_riders import (
     split_name,
 )
 from .scrapers.wikipedia_teams import fetch_current_worldteams
+from .kadenz import ist_faellig, naechster_lauf_in, takt_tage
 from .taxonomy import achsen_kombinationen
 
 logger = logging.getLogger(__name__)
@@ -101,7 +104,37 @@ def _timed(func, job_id: str):
     return wrapper
 
 
-def refresh_teams() -> None:
+def _takt_erlaubt(job: str, force: bool) -> bool:
+    """Ob der Job jetzt arbeiten darf - oder ob sein Takt noch läuft.
+
+    `force` kommt von der Kommandozeile (python -m app.scheduler <job>):
+    wer den Job von Hand aufruft, will ihn jetzt laufen sehen, nicht hören,
+    dass er nicht fällig ist.
+
+    Ist die Tabelle nicht lesbar, wird gearbeitet. Ein unlesbarer Merker
+    darf nicht dazu führen, dass die Daten nie wieder aktualisiert werden -
+    die Kosten einer unnötigen Aktualisierung sind kleiner als die eines
+    Stillstands, den niemand bemerkt."""
+    if force:
+        return True
+    try:
+        letzter = db.letzter_joblauf(job)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "%s: Fälligkeit nicht prüfbar (%s) - wird ausgeführt", job, exc
+        )
+        return True
+    if ist_faellig(job, letzter):
+        return True
+    rest = naechster_lauf_in(job, letzter)
+    logger.info(
+        "%s nicht fällig: Takt %d Tage, wieder in %d Tagen",
+        job, takt_tage(job), rest.days,
+    )
+    return False
+
+
+def refresh_teams(force: bool = False) -> None:
     """Die aktuellen WorldTeams von Wikipedia in die teams-Tabelle schreiben.
 
     Schrieb vorher in den JSON-Cache, und refresh_rosters kopierte den
@@ -116,9 +149,12 @@ def refresh_teams() -> None:
     if not db.is_configured():
         logger.info("Team-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
         return
+    if not _takt_erlaubt("refresh_teams", force):
+        return
     try:
         teams = fetch_current_worldteams()
         db.upsert_teams(teams)
+        db.joblauf_vermerken("refresh_teams")
         logger.info("Teams aktualisiert: %d Einträge", len(teams))
     except Exception as exc:  # noqa: BLE001 - Job darf niemals crashen
         logger.error("Team-Refresh fehlgeschlagen: %s", exc)
@@ -126,7 +162,7 @@ def refresh_teams() -> None:
 
 
 
-def refresh_rosters() -> None:
+def refresh_rosters(force: bool = False) -> None:
     """Aktuelle Kader aller WorldTeams (ein Wikipedia-Abruf pro Team) in die
     Datenbank schreiben, plus die UCI-Punkte-Platzhalter.
 
@@ -145,6 +181,8 @@ def refresh_rosters() -> None:
     """
     if not db.is_configured():
         logger.info("Kader-Refresh übersprungen: keine Datenbank konfiguriert (DATABASE_URL fehlt)")
+        return
+    if not _takt_erlaubt("refresh_rosters", force):
         return
 
     try:
@@ -167,12 +205,14 @@ def refresh_rosters() -> None:
     rider_rows: list[dict] = []
     seen_rider_ids: set[str] = set()
     duplicates = 0
+    gelesen = 0
     for team in teams:
         try:
             roster = roster_riders_for_team(team)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Kader-Scraping für '%s' fehlgeschlagen: %s", team.name, exc)
             continue
+        gelesen += 1
         for rider_id, rider in roster:
             # Ein Fahrer kann auf zwei Kadern stehen (bei Wechseln listen ihn
             # beide Team-Artikel). Innerhalb eines Batches muss jede ID genau
@@ -217,12 +257,27 @@ def refresh_rosters() -> None:
         logger.warning("Fahrer-Upsert fehlgeschlagen (%d Fahrer): %s", len(changed), exc)
         written = 0
     logger.info(
-        "Kader aktualisiert: %d von %d Fahrern geändert, %d Teams%s",
+        "Kader aktualisiert: %d von %d Fahrern geändert, %d von %d Teams gelesen%s",
         written,
         len(rider_rows),
+        gelesen,
         len(teams),
         f", {duplicates} Doppelnennungen übersprungen" if duplicates else "",
     )
+
+    # Nur vermerken, wenn mindestens ein Kader gelesen werden konnte. Sonst
+    # wäre ein Lauf, bei dem Wikipedia komplett ausfiel, für den ganzen Takt
+    # als erledigt abgehakt - bei 30 Tagen Grundtakt ein Monat ohne Daten.
+    # Teilausfälle (ein Team mit geändertem Seitenlayout) vermerken dagegen
+    # schon: sie jedes Mal erneut zu versuchen wäre genau die Verschwendung,
+    # die dieser Takt beseitigt, und die Warnung oben steht in jedem Lauf.
+    if gelesen:
+        db.joblauf_vermerken("refresh_rosters")
+    else:
+        logger.warning(
+            "Kader-Refresh nicht vermerkt: kein einziges Team lesbar - "
+            "der nächste Lauf versucht es erneut"
+        )
 
     try:
         new_placeholders = db.ensure_season_point_placeholders()
@@ -577,7 +632,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    _timed(by_id[args.job], args.job)()
+    # force=True, wo der Job es kennt: ein Aufruf von Hand soll arbeiten,
+    # nicht melden, dass sein Takt noch läuft (siehe _takt_erlaubt).
+    func = by_id[args.job]
+    if "force" in inspect.signature(func).parameters:
+        func = functools.partial(func, force=True)
+    _timed(func, args.job)()
     return 0
 
 

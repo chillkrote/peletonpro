@@ -189,9 +189,12 @@ wäre. Aus demselben Grund liegen dort inzwischen auch die Teams, siehe
   Zugriffsfunktionen. `is_configured()` prüft, ob `DATABASE_URL` gesetzt
   ist; ohne sie bleiben `/api/riders*` leer/deaktiviert, der Rest der App
   läuft unverändert weiter.
-- **`scheduler.refresh_rosters`** - läuft alle `REFRESH_INTERVAL_ROSTERS`
-  Sekunden (Default 24 h): aktualisiert die Kader aller aktuellen Teams
-  (ein Abruf pro Team) und schreibt nur geänderte Fahrer.
+- **`scheduler.refresh_rosters`** - **prüft** alle
+  `REFRESH_INTERVAL_ROSTERS` Sekunden, ob ein Abruf fällig ist, und
+  aktualisiert dann die Kader aller aktuellen Teams (ein Abruf pro Team);
+  geschrieben werden nur geänderte Fahrer. Wie oft "fällig" ist, hängt vom
+  Monat ab und steht in `app/kadenz.py` - siehe "Saison-Kadenz" unten. Das
+  Intervall ist also nur noch der Prüftakt, nicht der Abruftakt.
 - **`scheduler.refresh_rider_details`** - läuft alle
   `REFRESH_INTERVAL_RIDER_DETAILS` Sekunden (Default 3 Min): holt die volle Historie für
   bis zu `RIDER_HISTORY_BATCH_SIZE` Fahrer (Default 30), die noch keine
@@ -707,11 +710,124 @@ Dann `http://localhost:8000/index.html` öffnen. `js/api.js` erkennt
 
 | Job | Takt | Zeitbudget | Pool | Was er tut |
 |---|---|---|---|---|
-| `refresh_teams` | 24 h | – | scrape | WorldTeams-Übersicht in die `teams`-Tabelle |
-| `refresh_rosters` | 24 h | – | scrape | Kader aller Teams + UCI-Punkte-Platzhalter |
+| `refresh_teams` | Prüfung 24 h, Abruf 7 / 30 Tage | – | scrape | WorldTeams-Übersicht in die `teams`-Tabelle |
+| `refresh_rosters` | Prüfung 24 h, Abruf 3 / 7 / 30 Tage | – | scrape | Kader aller Teams + UCI-Punkte-Platzhalter |
 | `refresh_rider_details` | 15 min | 120 s | scrape | Rückstand: Team-Historie, Strava |
 | `refresh_race_history` | 15 min | 600 s | scrape | Renn-Seeding und Detail-Backfill |
 | `refresh_news` | 15 min | – | default | RSS-Feeds |
+
+Bei den beiden oberen Jobs stehen zwei Zahlen, weil es zwei verschiedene
+Dinge sind: das **Intervall** sagt, wie oft der Job nachsieht, ob er etwas
+zu tun hat, der **Abruf-Takt** sagt, wie oft er es dann wirklich tut. Warum
+das getrennt sein muss, steht im nächsten Abschnitt.
+
+### Saison-Kadenz: wie oft eine Quelle wirklich neu gelesen wird
+
+**Das Problem war nicht das Intervall.** `REFRESH_INTERVAL_ROSTERS` stand
+auf 24 Stunden. Trotzdem liefen die Kader am 14.09.2026 **14 Mal** an einem
+Tag, jedes Mal mit dem Ergebnis `0 von 517 Fahrern geändert`:
+
+    06:49  07:43  08:01  09:12  09:44  11:06  11:50
+    12:14  12:27  13:04  14:25  15:34  15:59  16:35
+
+Jede dieser Zeilen kam in den Render-Logs von einer anderen Instanz-ID,
+also von einem frischen Prozessstart. Die Ursache ist
+`next_run_time=datetime.now() + stagger` in `start_scheduler()`:
+**APScheduler führt jeden Job beim Prozessstart einmal aus.** Eine Instanz
+auf Renders kostenlosem Plan schläft nach ~15 Minuten ohne Anfrage ein und
+startet beim nächsten Besuch neu - an einem normalen Tag also mehrmals pro
+Stunde. Ein Intervall, das an die Prozesslaufzeit hängt, greift damit nie;
+der Takt war faktisch "bei jedem Aufwachen". Das sind rund **500
+Wikipedia-Anfragen an einem Tag, um nichts zu erfahren** - und genau die
+Anfragen, die dem Renn-Backfill im einzigen `scrape`-Worker fehlen.
+
+**Die Lösung: Fälligkeit aus der Datenbank, nicht aus der Laufzeit.** Die
+Tabelle `job_runs` (Migration 0007) hält je Job den letzten **erfolgreichen**
+Lauf; `app/kadenz.py` vergleicht ihn mit dem Takt für den heutigen Tag, und
+`scheduler._takt_erlaubt()` bricht den Job ab, wenn er nicht fällig ist. Das
+ist robuster als ein fester Kalenderplan ("jeden Montag um 3"): ein
+verpasstes Zeitfenster geht nicht verloren, sondern wird beim nächsten
+Aufwachen nachgeholt - das Verhalten, das ein Dienst braucht, der schläft.
+
+**Der Takt folgt der Quelle, nicht der Uhr.** Kader ändern sich nicht
+gleichmäßig über das Jahr, sondern in Sprüngen - deshalb ist der Takt eine
+Funktion des Monats (`kadenz.PLAN`):
+
+| Monat | `refresh_rosters` | `refresh_teams` | Warum |
+|---|---|---|---|
+| Januar | 3 Tage | 7 Tage | Die neuen Kader treten in Kraft. Wikipedia trägt das über Tage und Wochen nach, nicht an einem Tag. |
+| Februar | 7 Tage | 30 Tage | Nachzügler: Fahrer, die erst im Januar/Februar einen Vertrag finden. |
+| August, September | 7 Tage | 30 Tage | Stagiaires. Ab 1. August dürfen Teams Nachwuchsfahrer aufnehmen; sie erscheinen dann in den Kaderlisten. |
+| alle übrigen | 30 Tage | 30 Tage | Wechsel mitten in der Saison (Vertragsauflösung, Rücktritt) gibt es, aber selten und unvorhersehbar. |
+
+März steht bewusst **nicht** drin: Teamwechsel werden im Januar wirksam, im
+März passiert nichts Systematisches mehr. Und `refresh_teams` braucht nur
+den Januar-Takt, weil die Liste der WorldTeams selbst sich höchstens zum
+Jahreswechsel ändert - die 18 Namen, nicht die 517 Fahrer.
+
+Maßgeblich ist der **heutige** Monat, nicht der des letzten Laufs: am
+1. Januar gilt sofort der Januar-Takt, auch wenn zuletzt im Dezember
+abgerufen wurde. Damit öffnet sich das enge Fenster genau dann, wenn die
+Daten sich ändern, und nicht einen Grundtakt später.
+
+**Was das einspart.** Gemessener Ist-Zustand: ~14 Läufe/Tag × 18 Teams ≈
+250 Team-Abrufe pro Tag, plus die Team-Übersicht. Neu: 18 Abrufe alle 30
+Tage im Grundtakt, alle 3 Tage im Januar. Über ein Jahr sind das statt
+~90.000 Abrufen rund **500** - bei identischem Datenstand, weil die
+gemessenen Läufe ja nachweislich nichts geändert haben.
+
+**Drei Details, die sonst still schiefgehen:**
+
+- **Vermerkt wird nur, wenn mindestens ein Kader lesbar war.** Ein Lauf, bei
+  dem Wikipedia komplett ausfällt, dürfte nicht als erledigt abgehakt
+  werden - bei 30 Tagen Grundtakt wäre das ein Monat ohne Daten. Deshalb
+  zählt `refresh_rosters` die gelesenen Teams (`%d von %d Teams gelesen` im
+  Log) und vermerkt nur bei `> 0`. **Teil**ausfälle vermerken dagegen schon:
+  ein einzelnes Team mit geändertem Seitenlayout jedes Mal erneut zu
+  versuchen wäre genau die Verschwendung, die dieser Takt beseitigt, und die
+  Warnung dazu steht in jedem Lauf.
+- **Ein unlesbarer Merker heißt arbeiten, nicht schlafen.** Wirft
+  `db.letzter_joblauf()` (Tabelle fehlt, Verbindung weg), läuft der Job. Die
+  Kosten einer unnötigen Aktualisierung sind kleiner als die eines
+  Stillstands, den niemand bemerkt.
+- **Der Aufruf von Hand ignoriert den Takt.** `python -m app.scheduler
+  refresh_rosters` setzt `force=True` - wer den Job von Hand startet, will
+  ihn laufen sehen, nicht hören, dass er nicht fällig ist. Die CLI erkennt
+  per `inspect.signature`, welche Jobs den Schalter kennen, damit die
+  Rückstands-Jobs unverändert bleiben.
+
+Beim Überspringen schreibt der Job eine Zeile mit Takt und Restzeit
+(`refresh_rosters nicht fällig: Takt 30 Tage, wieder in 12 Tagen`). Ein
+"nicht fällig" ohne "bis wann" wäre eine Sackgasse für jeden, der wissen
+will, ob der Job noch lebt.
+
+**Wer hier nicht steht, und warum:** `refresh_rider_details` und
+`refresh_race_history` arbeiten einen Rückstand ab - sie holen jeden Eintrag
+genau einmal und sollen so oft laufen wie möglich, bis die Warteschlange
+leer ist. `refresh_news` ist die einzige Quelle, die Frequenz wirklich
+rechtfertigt. Die drei behalten ihr Intervall.
+
+#### Prüfen
+
+```bash
+DATABASE_URL=postgresql://... python3 scripts/check-kadenz.py
+```
+
+Teil 1 und 2 laufen ohne Datenbank; für Teil 3 genügt eine **leere**
+Datenbank, das Skript wendet die Migrationen selbst an. 30 Prüfungen in drei
+Teilen: der Monatsplan (inklusive `KeyError` für einen
+Job ohne Takt), die Fälligkeitsgrenzen (6 / 7 / 8 Tage Abstand; Januar und
+Juni mit **demselben** Abstand, einmal fällig und einmal nicht), und die
+Sperre selbst gegen ein echtes Postgres, mit zählenden Attrappen anstelle
+von `fetch_current_worldteams`/`roster_riders_for_team`. Belegt dort: der
+zweite Lauf ruft nichts mehr ab, `force=True` schon, ein um 31 Tage
+zurückdatierter Merker macht den Job wieder fällig, und ein Totalausfall
+wird nicht vermerkt.
+
+Gegengeprüft, dass die Prüfungen etwas taugen: die Sperre entfernt (zweiter
+Lauf scrapt wieder), bei Totalausfall trotzdem vermerkt, den Monat des
+letzten Laufs statt des heutigen benutzt (Januar-Grenze fällt), und `force`
+ignoriert - jede Variante lässt genau die zuständige Prüfung scheitern.
 
 ### Ein Worker für alles, was Wikipedia abfragt
 
@@ -794,9 +910,13 @@ ausgehungert - und beide Jobs liefen länger als ihr eigenes Intervall, sodass
 APScheduler laufend Läufe verwarf (`maximum number of running instances
 reached`).
 
-Der Kader-Teil läuft jetzt im Tagestakt, der Rückstands-Abbau behält den
-kurzen. Damit sinken die Wikipedia-Abrufe für Kader von bis zu **18 alle drei
-Minuten** auf **18 pro Tag**.
+Der Kader-Teil wurde daraufhin auf ein Tagesintervall gesetzt, der
+Rückstands-Abbau behielt den kurzen. Der erhoffte Effekt - 18 Abrufe pro Tag
+statt 18 alle drei Minuten - **trat so nicht ein**: gemessen liefen es 14
+Läufe am Tag, weil das Intervall an die Prozesslaufzeit hängt und der
+kostenlose Plan ständig neu startet. Erst der monatsabhängige Takt aus
+`app/kadenz.py` bringt die Ersparnis wirklich (siehe "Saison-Kadenz" oben);
+die Job-Trennung war die Voraussetzung dafür, nicht die Lösung.
 
 ### Nur schreiben, was sich geändert hat
 
@@ -947,6 +1067,7 @@ PGPORT=5599 ./scripts/check-migration-0003.sh   # Taxonomie
 PGPORT=5599 ./scripts/check-migration-0004.sh   # Ergebnis-IDs
 PGPORT=5599 ./scripts/check-migration-0005.sh   # Namensquelle
 PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
+DATABASE_URL=... python3 scripts/check-kadenz.py # Migration 0007 + Saison-Kadenz
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 ```
 
@@ -1000,12 +1121,20 @@ berechnen lassen.** Das heisst konkret:
 | Constraint setzen (und bei Verstoss abbrechen) | Werte umschreiben, damit ein Constraint passt |
 | Index anlegen | Primärschlüssel ändern |
 
-Die Migrationen 0002 (gender), 0003 (Taxonomie) und 0004 (Ergebnis-IDs)
-halten sich daran - keine von ihnen hat einen Bestandswert angefasst, und
-die Prüfskripte belegen das jeweils an einer befüllten Testdatenbank. Offen
-und ausdrücklich gesperrt sind damit Befund 7 Schritt 3 (`riders.id` auf die
-Wikidata-QID) und ein späteres `DROP` von `race_results.rider_name` /
-`team_name`.
+Alle bisherigen Migrationen halten sich daran, und die Prüfskripte belegen
+das jeweils an einer befüllten Testdatenbank: 0002 (gender), 0003
+(Taxonomie), 0004 (Ergebnis-IDs) und 0005 (Namensquelle) fügen hinzu oder
+füllen Neues, 0007 (Job-Läufe) legt nur eine neue Tabelle an. Die einzige
+Migration, die einen bestehenden Wert überschreibt, ist 0006
+(`results_fetched_at` auf NULL zurück) - und zwar eine reine
+**Buchhaltungsspalte**, deren Wert der Backfill selbst neu setzt. Genau die
+Unterscheidung macht die Regel oben: Daten, die nur aus der Quelle kommen
+können, sind unantastbar; ein Merker, den der nächste Lauf neu schreibt,
+ist es nicht.
+
+Offen und ausdrücklich gesperrt sind damit Befund 7 Schritt 3 (`riders.id`
+auf die Wikidata-QID) und ein späteres `DROP` von `race_results.rider_name`
+/ `team_name`.
 
 ### Bekannte Grenze des CSV-Exports (nicht des Backups)
 
