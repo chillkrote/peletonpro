@@ -31,7 +31,7 @@ import logging
 from typing import Optional
 
 from .db import _connect, stream_query
-from .models import RaceRecord, RaceResultEntry, RaceStage
+from .models import RaceRecord, RaceResultEntry, RaceStage, RiderRaceResult
 from .gender import GENDER_DEFAULT, gender_prefix
 from .race_meta import is_grand_tour
 from .taxonomy import pruefe_achsen
@@ -498,6 +498,69 @@ _TEAM_TREFFER = """(
         res.team_id = %(team_id)s
         OR (res.team_id IS NULL AND res.team_name = %(team_name)s)
     )"""
+
+
+def get_rider_results(rider_id: str, limit: int, offset: int) -> list[RiderRaceResult]:
+    """Die Platzierungen eines Fahrers, neueste Saison zuerst.
+
+    Geht über `race_results.rider_id` (Migration 0004), nicht über den Namen.
+    Ein Namensvergleich hätte hier dieselbe stille Lücke wie bei der
+    Team-Statistik: eine abweichende Schreibweise in der Ergebnistabelle
+    (Akzente, Initialen) ergäbe eine leere Liste, die wie "keine Ergebnisse"
+    aussieht statt wie "nicht gefunden".
+
+    Enthalten sind Gesamtwertungen UND Etappenergebnisse; unterscheidbar an
+    `stage_number` (NULL = Gesamtwertung oder Eintagesrennen). Der Teamname
+    kommt aus der Ergebniszeile, ist also der damalige - nur `team_id` zeigt
+    auf das Team von heute.
+
+    Sortiert nach Saison und Startdatum absteigend, innerhalb eines Rennens
+    die Gesamtwertung vor den Etappen."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id AS race_id, r.name AS race_name, r.season, r.category,
+                   r.circuit, r.start_date, s.stage_number, res.position,
+                   res.team_name, res.team_id, res.time_or_gap
+            FROM race_results res
+            JOIN races r ON r.id = res.race_id
+            LEFT JOIN race_stages s ON s.id = res.stage_id
+            WHERE res.rider_id = %s
+            ORDER BY r.season DESC, r.start_date DESC NULLS LAST, r.id,
+                     s.stage_number NULLS FIRST
+            LIMIT %s OFFSET %s
+            """,
+            (rider_id, limit, offset),
+        ).fetchall()
+    return [
+        RiderRaceResult(
+            race_id=row["race_id"],
+            race_name=row["race_name"],
+            season=row["season"],
+            category=row["category"],
+            circuit=row["circuit"],
+            is_grand_tour=is_grand_tour(row["race_name"]),
+            start_date=row["start_date"].isoformat() if row["start_date"] else None,
+            stage_number=row["stage_number"],
+            position=row["position"],
+            team_name=row["team_name"],
+            team_id=row["team_id"],
+            time_or_gap=row["time_or_gap"],
+        )
+        for row in rows
+    ]
+
+
+def count_rider_results(rider_id: str) -> int:
+    """Gesamtzahl für die Paginierung - ohne sie weiss das Frontend nicht,
+    ob eine Seite die letzte ist (dieselbe Begründung wie bei
+    count_riders)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM race_results WHERE rider_id = %s",
+            (rider_id,),
+        ).fetchone()
+    return row["n"] if row else 0
 
 
 def get_team_season_stats(team_id: str, team_name: str, season: int) -> dict:

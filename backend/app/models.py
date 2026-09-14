@@ -124,6 +124,37 @@ class RaceResultEntry(BaseModel):
     time_or_gap: Optional[str] = None
 
 
+class RiderRaceResult(BaseModel):
+    """Eine Platzierung, gesehen von der Fahrerseite - dieselbe Zeile aus
+    `race_results` wie RaceResultEntry, nur mit dem Rennen daneben statt mit
+    dem Fahrer.
+
+    Möglich geworden durch `race_results.rider_id` (Migration 0004): vorher
+    stand dort nur `rider_name` als Text, und eine Abfrage "die Ergebnisse
+    dieses Fahrers" hätte über einen Namensvergleich gehen müssen - mit
+    genau den Folgen, die die Team-Statistik hatte (siehe backend/README.md,
+    "Ergebniszeilen: verknüpft statt nur beschriftet")."""
+
+    race_id: str
+    race_name: str
+    season: int
+    category: Category
+    circuit: Optional[Circuit] = None
+    is_grand_tour: bool = False
+    start_date: Optional[str] = None
+    stage_number: Optional[int] = None
+    """None bedeutet Gesamtwertung oder Eintagesrennen, eine Zahl die
+    Platzierung auf dieser Etappe. Ein Etappensieg und ein Gesamtsieg sind
+    von aussen nur an diesem Feld zu unterscheiden."""
+    position: int
+    team_name: Optional[str] = None
+    """Das Team, wie es in der Ergebnistabelle des Rennens stand - also der
+    damalige Name, nicht der heutige. `team_id` zeigt auf das Team, sofern
+    die Zuordnung eindeutig war."""
+    team_id: Optional[str] = None
+    time_or_gap: Optional[str] = None
+
+
 class RaceStage(BaseModel):
     """Eine einzelne Etappe eines Mehretagenrennens."""
 
