@@ -157,6 +157,9 @@ def zuordnen(saison: Optional[int] = None) -> dict:
         return gesamt
     bericht = {"exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
     offene_namen: list[str] = []
+    # Die abgeleiteten Zuordnungen namentlich, nicht nur gezaehlt - siehe
+    # die Log-Meldung unten.
+    geraten: list[str] = []
     try:
         with db._connect() as conn:
             offen = conn.execute(
@@ -212,6 +215,10 @@ def zuordnen(saison: Optional[int] = None) -> dict:
                     (race_id, saison, gender, anlass, name),
                 )
                 bericht[art] += 1
+                if art != "exakt":
+                    eintrag = f"{gender}/{name!r} -> {race_id} ({art})"
+                    if eintrag not in geraten:
+                        geraten.append(eintrag)
 
             zugeordnet = {(n, g, a) for n, g, a, _, _ in gefunden}
             for zeile in offen:
@@ -232,6 +239,20 @@ def zuordnen(saison: Optional[int] = None) -> dict:
         saison, bericht["exakt"], bericht["enthalten"], bericht["aehnlich"],
         bericht["offen"],
     )
+    # Die abgeleiteten Zuordnungen NAMENTLICH. Sie getrennt zu ZAEHLEN war
+    # der halbe Schritt: wer wissen will, wie viel geraten ist, will danach
+    # wissen, WAS geraten wurde - sonst ist die Zahl eine Beunruhigung ohne
+    # Handhabe. Beim ersten Produktionslauf (14.09.2026) standen hier "2
+    # aehnlich", und welche zwei es waren, liess sich nicht feststellen.
+    # Die Liste bleibt kurz, weil die beiden Stufen per Konstruktion selten
+    # sind; "exakt" braucht keine Nachpruefung und steht deshalb nicht drin.
+    if geraten:
+        logger.info(
+            "Rennzuordnung %d abgeleitet (%d): %s%s",
+            saison, len(geraten), "; ".join(geraten[:LOG_GRENZE]),
+            f" ... und {len(geraten) - LOG_GRENZE} weitere"
+            if len(geraten) > LOG_GRENZE else "",
+        )
     if offene_namen:
         logger.info(
             "Rennzuordnung %d offen (%d Namen): %s%s",

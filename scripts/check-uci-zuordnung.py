@@ -111,6 +111,32 @@ pruefe("mindestens ein exakter Treffer", bericht["exakt"] >= 3, True)
 pruefe("drei 'enthalten'-Treffer (ein Rennen, drei Anlaesse)",
        bericht["enthalten"], 3)
 
+# Die abgeleiteten Zuordnungen muessen namentlich im Log stehen, nicht nur
+# gezaehlt: "2 aehnlich" ohne die Namen ist eine Beunruhigung ohne Handhabe.
+# Genau das war beim ersten Produktionslauf der Fall.
+print("=== 2b. Abgeleitete Zuordnungen stehen namentlich im Log ===")
+import logging  # noqa: E402
+from io import StringIO  # noqa: E402
+
+puffer = StringIO()
+haken = logging.StreamHandler(puffer)
+log = logging.getLogger("app.uci_zuordnung")
+log.addHandler(haken)
+log.setLevel(logging.INFO)
+with db._connect() as conn:
+    conn.execute(
+        "UPDATE uci_rennstufe SET race_id = NULL WHERE saison = %s "
+        "AND rennen_reglement = 'Tour of Guangxi'", (SAISON,)
+    )
+uci_zuordnung.zuordnen(SAISON)
+log.removeHandler(haken)
+ausgabe = puffer.getvalue()
+pruefe("Meldung 'abgeleitet' vorhanden", "abgeleitet" in ausgabe, True)
+pruefe("der abgeleitete Name steht drin", "Tour of Guangxi" in ausgabe, True)
+pruefe("die Art steht dabei", "(enthalten)" in ausgabe, True)
+pruefe("die race_id steht dabei",
+       "2026-wt-gree-tour-of-guangxi" in ausgabe, True)
+
 print("=== 3. Was NICHT zugeordnet werden darf ===")
 # Das Reglement schreibt "Omloop Nieuwsblad", Wikipedia "Omloop Het
 # Nieuwsblad". Die Aehnlichkeit ist 0,895 - knapp UNTER der Schwelle von
