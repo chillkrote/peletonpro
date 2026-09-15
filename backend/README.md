@@ -453,6 +453,14 @@ Zwei Dinge, die für eine Berechnung noch fehlen:
    Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U — auf Platz 1 sind
    das 125, 40 und 30 Punkte. Alle drei landen heute in `continental`.
 
+**Gerechnet wird seit Migration 0009** (`app/uci_berechnung.py`): aus
+`race_results` × `uci_punkte` entsteht eine Zeile je Ergebnis in
+`uci_punkte_fahrer`, mit `punkt_datum` für die rollierenden 52-Wochen-
+Ranglisten. Abgedeckt sind Gesamtklassement und Etappen der WorldTour.
+`rider_season_points.uci_points` bleibt dabei **absichtlich leer** — zwei
+von dreizehn Anlässen sind keine UCI-Rangliste, und eine Teilsumme in einer
+Spalte dieses Namens wäre eine stille Falschaussage.
+
 Sechs der dreizehn Anlässe haben ausserdem gar keine Quelle: nationale
 Meisterschaften, Kontinentalmeisterschaften, WM und Olympia stehen nicht
 im Kalender, der über `taxonomy.achsen_kombinationen()` geseedet wird.
@@ -1126,6 +1134,7 @@ PGPORT=5599 ./scripts/check-migration-0006.sh   # Ergebnisse nachholen
 DATABASE_URL=... python3 scripts/check-kadenz.py # Migration 0007 + Saison-Kadenz
 DATABASE_URL=... python3 scripts/check-uci-reglement.py  # Migration 0008 + Loader
 DATABASE_URL=... python3 scripts/check-uci-zuordnung.py  # Rennname -> races.id
+DATABASE_URL=... python3 scripts/check-uci-berechnung.py # Migration 0009 + Punkte
 python3 scripts/check-vokabular.py              # braucht keine Datenbank
 python3 scripts/check-uci-punkte.py             # UCI-Punkteskalen unter docs/
 ```

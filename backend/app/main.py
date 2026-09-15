@@ -14,6 +14,7 @@ from .config import CORS_ORIGINS, REQUIRE_DATABASE
 from .routers import export, news, race_history, riders, teams
 from .migrations import run_migrations
 from .uci_punkte import lade_reglement
+from .uci_berechnung import berechne
 from .uci_zuordnung import zuordnen
 from .ratelimit import limiter
 from .routers.messages import INTERNAL_ERROR
@@ -163,6 +164,11 @@ async def lifespan(app: FastAPI):
     # über die Zeit geseedet werden - reines SQL, kein externer Abruf, und
     # es arbeitet nur an Zeilen mit race_id IS NULL.
     zuordnen()
+
+    # Und aus Ergebnissen + Skalen die Punkte rechnen. Rechnet nur Rennen,
+    # deren Ergebnisse neuer sind als die letzte Rechnung - beim üblichen
+    # Neustart also nichts.
+    berechne()
 
     # Scheduler läuft im Hintergrund-Thread; der erste Lauf jedes Jobs
     # startet sofort (next_run_time=now), blockiert also nicht den
