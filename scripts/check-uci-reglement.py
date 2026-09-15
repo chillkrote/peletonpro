@@ -60,8 +60,13 @@ with db._connect() as conn:
             "WHERE table_name = 'uci_rennstufe'"
         ).fetchall()
     }
-pruefe("vier uci_-Tabellen angelegt", sorted(tabellen),
-       ["uci_punkte", "uci_quelle", "uci_rennstufe", "uci_stufe"])
+# uci_punkte_fahrer kommt aus Migration 0009 (die Berechnung) und gehoert
+# nicht zu 0008 - sie steht hier trotzdem in der Erwartung, weil dieses
+# Skript die Migrationen vollstaendig anwendet. Eine Tabelle, die
+# unerwartet auftaucht oder fehlt, soll auffallen.
+pruefe("die uci_-Tabellen sind vollstaendig", sorted(tabellen),
+       ["uci_punkte", "uci_punkte_fahrer", "uci_quelle", "uci_rennstufe",
+        "uci_stufe"])
 pruefe("uci_points ist NUMERIC(8,2)",
        (typ["data_type"], typ["numeric_precision"], typ["numeric_scale"]),
        ("numeric", 8, 2))

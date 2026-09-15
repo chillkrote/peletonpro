@@ -506,10 +506,86 @@ zweimal und landen dort ebenfalls bei „mehrdeutig". Der Zweig bleibt
 stehen, weil er den Fall benennt, aber im Code steht jetzt ausdrücklich,
 dass sich niemand beim Umbau des Enthalten-Zweigs auf ihn verlassen darf.
 
+## Schritt 2 ist gebaut: die Berechnung
+
+`app/uci_berechnung.py` rechnet aus `race_results` × `uci_punkte` die
+Punkte je Ergebniszeile und schreibt sie nach `uci_punkte_fahrer`
+(Migration 0009).
+
+### Warum je Ergebnis und nicht je Saison
+
+`rider_season_points` hält eine Zahl je (Fahrer, Jahr). Das reicht für eine
+Anzeige, aber nicht für drei Dinge:
+
+1. **Nachrechnen.** Eine Saisonsumme, die von der UCI-Rangliste abweicht,
+   sagt nicht, welches Rennen schuld ist. Eine Zeile je Ergebnis schon.
+2. **Die 52-Wochen-Ranglisten.** Die UCI-Einzelwertung ist rollierend
+   (Art. 2.10.002) und braucht das **Datum** jedes Punktgewinns. Aus Zeilen
+   je Ergebnis lassen sich beide Sichten bilden, aus der Jahressumme nur
+   eine. Deshalb trägt jede Zeile ein `punkt_datum` — das Etappendatum bei
+   Etappen, das Renn-Enddatum beim Gesamtklassement.
+3. **Neuberechnen.** Ändert sich eine Skala oder eine Zuordnung, muss die
+   alte Rechnung verschwinden können, ohne dass jemand rät, welcher Anteil
+   der Summe von wo kam.
+
+### `rider_season_points.uci_points` bleibt absichtlich leer
+
+Diese Rechnung deckt **zwei von dreizehn** Anlässen ab. Eine Teilsumme in
+eine Spalte zu schreiben, die „UCI-Punkte" heisst, wäre genau die stille
+Falschaussage, die dieses Projekt an anderen Stellen beseitigt hat. Wer die
+Teilsumme sehen will, fragt `uci_berechnung.rangliste()` — die Funktion
+heisst so und ist im Docstring als **Teil**summe gekennzeichnet.
+
+### Artikel 2.6.001 in Code
+
+Der Auslöser der Regel — „the other stages are **cancelled**" — steht
+nirgends in unseren Daten. Das nächstliegende Signal ist: ein Rennen **mit**
+Etappen, das Ergebnisse für genau **eine** Etappe hat. Danach wird
+gerechnet: Etappenpunkte ja, Gesamtklassement nein.
+
+Dieses Signal ist nicht beweisend — ein Rennen, dessen Etappen nur teilweise
+gescraped wurden, sieht genauso aus. **Deshalb wird jede Anwendung als
+Warnung geloggt, mit Rennnamen.** Die Regel soll fast nie greifen; greift
+sie oft, ist das kein Beleg für viele Absagen, sondern für Lücken im
+Scraping. Die Warnung ist die einzige Stelle, an der dieser Unterschied
+auffallen kann.
+
+### Wer keine `rider_id` hat, bekommt keine Punkte
+
+`race_results.rider_id` ist nur dort gesetzt, wo sich der Name einem Fahrer
+zuordnen liess (in Produktion rund die Hälfte der Zeilen). Ohne ID lässt
+sich die Zeile keinem Fahrer gutschreiben. Die Zahl steht in der
+Log-Meldung — sie sagt zugleich, wie vollständig die Rechnung überhaupt
+sein kann.
+
+### Prüfen
+
+```bash
+DATABASE_URL=postgresql://... python3 scripts/check-uci-berechnung.py
+```
+
+27 Prüfungen gegen **konkrete Zahlen aus dem Reglement**: Tour-Gesamtsieg
+1300, Platz 2 1040, Platz 60 noch 15, Platz 61 nichts, Etappensieg 210,
+unterste Stufe 400. Ein Test, der nur „irgendwelche Punkte" prüft, würde
+eine um eine Position verschobene Skala nicht bemerken — und das ist der
+wahrscheinlichste Fehler.
+
+Dazu: Art. 2.6.001 in **beide** Richtungen (ein Rennen mit einer Etappe
+bekommt kein Gesamtklassement, eines mit zweien schon), das `punkt_datum`,
+ein Rennen ohne Zuordnung bleibt ungerechnet, der zweite Lauf tut nichts,
+neue Ergebnisse ersetzen statt zu ergänzen, eine Doppelnennung wird gezählt
+statt verdoppelt, und `rider_season_points` bleibt unberührt.
+
+Fünf Gegenproben, jede bricht die zuständige Prüfung: Skala um eine
+Position verschoben, Art. 2.6.001 nie angewandt, immer angewandt, alte
+Zeilen nicht gelöscht, Merker ignoriert.
+
 ### Die weitere Reihenfolge
 
-1. ~~Die 121 `race_id` zuordnen~~ — **gebaut**; wie viele davon in Produktion
-   aufgehen, sagt die Log-Zeile `Rennzuordnung 2026: …` nach dem Deploy.
+1. ~~Die 121 `race_id` zuordnen~~ — **gebaut**, 67 von 69 Männer-Zeilen.
+2. ~~Berechnung für `gc` und `etappe`~~ — **gebaut**. Offen bleibt die
+   Gegenprobe gegen eine **veröffentlichte** UCI-Rangliste: sie ist von
+   dieser Arbeitsumgebung aus nicht abrufbar und braucht eine Quelle.
 2. **Die Berechnung für `gc` und `etappe`** bauen, inklusive der Ausfallregel
    aus 2.6.001, und gegen eine veröffentlichte Rangliste gegenprüfen. Erst
    dieser Vergleich zeigt, ob die Kette stimmt.
