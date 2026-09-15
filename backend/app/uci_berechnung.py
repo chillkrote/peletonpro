@@ -47,8 +47,10 @@ Gesamtklassement, 15 auf der Etappe). Englische Wikipedia-Rennartikel
 fuehren typischerweise eine Top-10; die Plaetze 11 bis 60 gibt es dort
 schlicht nicht.
 
-Das begrenzt jede Rangliste aus dieser Quelle staerker als die fehlenden
-Anlaesse. Es liegt NICHT an diesem Code und auch nicht am Parser
+Nachgerechnet sind das 26 % der Punkte eines Rennens, in jeder Stufe
+gleich - nicht die Mehrheit. Die fehlenden Punkte gehoeren aber bestimmten
+Fahrern GANZ: wer eine Saison lang zwischen Platz 11 und 20 faehrt, steht
+hier mit null da. Es liegt NICHT an diesem Code und auch nicht am Parser
 (wikipedia_tables.parse_result_row liest jede Zeile, ohne Begrenzung) -
 es ist eine Quellenfrage. Siehe docs/uci-punkte.md.
 """

@@ -587,11 +587,27 @@ typischerweise eine Top-10.
 liest jede Zeile der Tabelle, es gibt keine Begrenzung; die Flachheit kommt
 aus der Quelle.
 
-Für die Punkteberechnung ist das die **härtere** Grenze als die fehlenden
-Anlässe: Punkte für die Plätze 11 bis 60 eines Rennens sind aus dieser
-Quelle grundsätzlich nicht zu holen. Bei der Tour sind das immerhin die
-Ränge, die zusammen mehr Punkte vergeben als die ersten zehn. Wer eine
-vollständige Rangliste will, braucht eine tiefere Ergebnisquelle — das ist
+**Was das kostet, nachgerechnet.** Die Plätze 11 bis 60 sind aus dieser
+Quelle grundsätzlich nicht zu holen. Wie viel das ist, hängt vom Rennen ab —
+und ist kleiner, als es intuitiv wirkt:
+
+| Stufe | Top-10 | Plätze 11–60 | Anteil der fehlenden Ränge |
+|---|---|---|---|
+| `gc1` (Tour) | 6.420 | 2.315 | 26 % |
+| `gc2` (Giro, Vuelta) | 5.285 | 1.850 | 26 % |
+| `gc3` (Monumente) | 3.775 | 1.335 | 26 % |
+| `gc4` | 2.360 | 845 | 26 % |
+| `gc5` | 1.888 | 674 | 26 % |
+
+Rund ein Viertel der Punkte eines Rennens ist also nicht erreichbar, nicht
+die Mehrheit. **Aber die Verteilung ist das Problem, nicht die Summe:** die
+fehlenden Punkte gehören nicht allen ein bisschen, sondern **ganz bestimmten
+Fahrern ganz**. Wer eine Saison lang zwischen Platz 11 und 20 fährt, steht
+bei uns mit **null** Punkten da, obwohl er in der echten Rangliste weit oben
+steht. Für einen Spitzenfahrer, der regelmässig die Top-10 trifft, stimmt die
+Zahl dagegen weitgehend.
+
+Wer eine vollständige Rangliste will, braucht eine tiefere Ergebnisquelle —
 eine Quellenfrage, keine Programmierfrage.
 
 Nachprüfen lässt sich die genaue Tiefe mit einer Abfrage gegen ein

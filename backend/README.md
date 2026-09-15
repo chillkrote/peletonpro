@@ -466,8 +466,11 @@ Erster Produktionslauf (15.09.2026): `31 Rennen, 980 Ergebniszeilen, davon
 ist die wichtigste: **Wikipedia veröffentlicht nur die Spitze** (Etappen
 höchstens 15 Plätze, Gesamtklassement höchstens 60, real meist eine
 Top-10). Punkte für die Plätze 11 bis 60 sind aus dieser Quelle nicht zu
-holen — eine härtere Grenze als die fehlenden Anlässe, und eine
-Quellenfrage, keine Programmierfrage. Begründung in `docs/uci-punkte.md`.
+holen: nachgerechnet **26 %** der Punkte eines Rennens, in jeder Stufe
+gleich. Nicht die Mehrheit — aber die fehlenden Punkte gehören bestimmten
+Fahrern **ganz**: wer eine Saison lang zwischen Platz 11 und 20 fährt, steht
+bei uns mit null da. Eine Quellenfrage, keine Programmierfrage. Begründung
+in `docs/uci-punkte.md`.
 
 Sechs der dreizehn Anlässe haben ausserdem gar keine Quelle: nationale
 Meisterschaften, Kontinentalmeisterschaften, WM und Olympia stehen nicht
