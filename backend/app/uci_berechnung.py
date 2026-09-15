@@ -37,6 +37,20 @@ WER KEINE rider_id HAT, BEKOMMT KEINE PUNKTE
 zuordnen liess. Ohne ID laesst sich die Zeile keinem Fahrer gutschreiben.
 Das ist keine stille Luecke: die Zahl steht in der Log-Meldung, und sie
 sagt zugleich, wie vollstaendig die Rechnung ueberhaupt sein kann.
+Gemessen am 15.09.2026: 133 von 980 Zeilen ohne ID, also 13,6 %.
+
+DIE HAERTERE GRENZE STEHT IN DER QUELLE
+---------------------------------------
+Derselbe Lauf meldete "0 ausserhalb der Skala" - keine einzige der 980
+Zeilen hatte eine Platzierung tiefer als die Skala reicht (60 im
+Gesamtklassement, 15 auf der Etappe). Englische Wikipedia-Rennartikel
+fuehren typischerweise eine Top-10; die Plaetze 11 bis 60 gibt es dort
+schlicht nicht.
+
+Das begrenzt jede Rangliste aus dieser Quelle staerker als die fehlenden
+Anlaesse. Es liegt NICHT an diesem Code und auch nicht am Parser
+(wikipedia_tables.parse_result_row liest jede Zeile, ohne Begrenzung) -
+es ist eine Quellenfrage. Siehe docs/uci-punkte.md.
 """
 import logging
 from typing import Optional
