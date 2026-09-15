@@ -394,9 +394,21 @@ Stufen, im Log getrennt gezählt:
 | `enthalten` | der Reglement-Name steht als ganze Wortfolge in **genau einem** Kandidaten (`Tour of Guangxi` in `Gree–Tour of Guangxi`) |
 | `aehnlich` | Ähnlichkeit ≥ 0,90 **und** mindestens 0,05 besser als der zweitbeste |
 
-Getrennt gezählt, weil die drei nicht gleich verlässlich sind: wer die
-Zahlen im Log liest, weiß, wie viel davon geraten ist. `exakt` braucht
-keine Nachprüfung, `aehnlich` schon.
+Getrennt gezählt, weil die drei nicht gleich verlässlich sind — und
+**namentlich geloggt**, soweit sie abgeleitet sind:
+
+```
+Rennzuordnung 2026: 44 exakt, 0 enthalten, 2 aehnlich, 75 offen
+Rennzuordnung 2026 abgeleitet (2): m/'…' -> 2026-wt-… (aehnlich); …
+Rennzuordnung 2026 offen (42 Namen): m/Itzulia Basque Country; …
+```
+
+Die Namen der abgeleiteten Zuordnungen standen zunächst **nicht** im Log,
+nur ihre Zahl. Das war der halbe Schritt: wer wissen will, wie viel geraten
+ist, will danach wissen **was** — sonst ist die Zahl eine Beunruhigung ohne
+Handhabe. Beim ersten Produktionslauf (14.09.2026) meldete das Log „2
+aehnlich", und welche zwei es waren, liess sich nicht mehr feststellen.
+`exakt` braucht keine Nachprüfung und steht deshalb nicht in der Liste.
 
 **Die Vergleichsform ist der halbe Erfolg.** Das Reglement schreibt
 „Paris - Nice" und „Tirreno - Adriatico", Wikipedia „Paris–Nice". Ohne
@@ -433,7 +445,7 @@ Schwäche des Abgleichs, sondern die nächste offene Baustelle.
 DATABASE_URL=postgresql://... python3 scripts/check-uci-zuordnung.py
 ```
 
-26 Prüfungen, leere Datenbank genügt. Die Hälfte belegt, dass etwas **nicht**
+30 Prüfungen, leere Datenbank genügt. Die Hälfte belegt, dass etwas **nicht**
 passiert: der Reglement-Tippfehler bleibt offen, zwei gleichnamige Zeilen in
 `races` werden nicht geraten, ein Rennen der falschen Kategorie oder Saison
 ist kein Kandidat, keine Frauen-Zeile wird auf ein Männerrennen gelegt.
