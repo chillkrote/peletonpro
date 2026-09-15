@@ -13,7 +13,9 @@ Haelfte der Pruefungen unten belegt deshalb, dass etwas NICHT passiert.
 """
 import os
 import pathlib
+import shutil
 import sys
+import tempfile
 
 WURZEL = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WURZEL / "backend"))
@@ -38,6 +40,14 @@ from app.migrations import run_migrations  # noqa: E402
 
 run_migrations()
 uci_punkte.lade_reglement()
+
+# Die echte Handdatei unter docs/ gilt fuer die Produktionsdatenbank und
+# wuerde hier auf Rennen zeigen, die es in dieser Testdatenbank nicht gibt.
+# Dieser Test prueft die MECHANIK der Handzuordnung, nicht den Inhalt der
+# Produktionsdatei - die prueft scripts/check-uci-punkte.py. Also ein
+# leeres Verzeichnis, bis Teil 6b sich selbst eine Datei hinlegt.
+LEER = pathlib.Path(tempfile.mkdtemp())
+uci_zuordnung.DOCS = LEER
 
 SAISON = 2026
 
@@ -199,6 +209,45 @@ pruefe("zwei gleich gute Kandidaten -> mehrdeutig",
        uci_zuordnung._beste(rf("Tour de Romandi"), eng)[1], "mehrdeutig")
 pruefe("gar keine Kandidaten -> eigener Grund",
        uci_zuordnung._beste(rf("Irgendwas"), {})[1], "keine Kandidaten")
+
+print("=== 6b. Handzuordnung aus der Datei ===")
+# Ausgangslage aus Teil 5: 'Omloop Nieuwsblad' (Maenner) steht auf
+# '2026-wt-von-hand'. Die Datei sagt etwas anderes - und gewinnt. Das ist
+# der Punkt: die Datei ist versioniert und geprueft, eine schon gesetzte
+# race_id kann von einem frueheren maschinellen Treffer stammen.
+tmp2 = pathlib.Path(tempfile.mkdtemp())
+(tmp2 / "uci-punkte-2026-race-ids.csv").write_text(
+    "geschlecht,rennen_reglement,race_id\n"
+    "m,Omloop Nieuwsblad,2026-wt-omloop\n"
+    # Eine race_id, die es NICHT gibt: muss gemeldet und uebersprungen
+    # werden, nicht die ganze Transaktion abbrechen - sonst riss ein
+    # Tippfehler in der Datei alle uebrigen Zuordnungen mit.
+    "m,DSSK (Donostia San Sebastian Klasikoa),2026-wt-gibt-es-nicht\n",
+    encoding="utf-8")
+uci_zuordnung.DOCS = tmp2
+
+vorher = zuordnung("gc", "Omloop Nieuwsblad")
+bericht_hand = uci_zuordnung.zuordnen(SAISON)
+pruefe("Ausgangslage: stand auf der Handarbeit aus Teil 5",
+       vorher, "2026-wt-von-hand")
+pruefe("Handzuordnung gezaehlt", bericht_hand["von_hand"] >= 1, True)
+pruefe("die Datei setzt den Wert",
+       zuordnung("gc", "Omloop Nieuwsblad"), "2026-wt-omloop")
+pruefe("race_id, die es nicht gibt, bleibt offen",
+       zuordnung("gc", "DSSK (Donostia San Sebastian Klasikoa)"), None)
+with db._connect() as conn:
+    heil = conn.execute(
+        "SELECT count(*) AS n FROM uci_rennstufe WHERE saison = %s", (SAISON,)
+    ).fetchone()["n"]
+pruefe("Transaktion nicht abgebrochen (alle Zeilen noch da)", heil > 100, True)
+
+# Ein zweiter Lauf darf nichts mehr zaehlen: die Werte stehen schon.
+zweiter_hand = uci_zuordnung.zuordnen(SAISON)
+pruefe("zweiter Lauf zaehlt keine Handzuordnung mehr",
+       zweiter_hand["von_hand"], 0)
+
+uci_zuordnung.DOCS = LEER
+shutil.rmtree(tmp2)
 
 print("=== 7. Ohne Saison-Angabe: alle Jahrgaenge ===")
 # Ein zweiter Reglement-Jahrgang. Ohne die Schleife ueber alle Saisons

@@ -390,6 +390,7 @@ Stufen, im Log getrennt gezählt:
 
 | Stufe | Regel |
 |---|---|
+| `von_hand` | aus `docs/uci-punkte-<saison>-race-ids.csv` — steht über allem anderen |
 | `exakt` | Vergleichsform beider Namen identisch |
 | `enthalten` | der Reglement-Name steht als ganze Wortfolge in **genau einem** Kandidaten (`Tour of Guangxi` in `Gree–Tour of Guangxi`) |
 | `aehnlich` | Ähnlichkeit ≥ 0,90 **und** mindestens 0,05 besser als der zweitbeste |
@@ -435,6 +436,49 @@ einer Saison erst über die Zeit geseedet werden: ein Rennen, das beim ersten
 Lauf noch nicht in `races` stand, wird beim nächsten gefunden. Ein Takt wie
 bei den Wikipedia-Jobs (`app/kadenz.py`) wäre hier also falsch.
 
+### Die Handdatei ist der vorgesehene Weg, kein Notbehelf
+
+`docs/uci-punkte-2026-race-ids.csv` (`geschlecht, rennen_reglement, race_id`)
+ordnet fest zu, was keine Ähnlichkeitsschwelle finden kann. Der erste
+Produktionslauf hat gezeigt, warum es sie braucht: Reglement und Wikipedia
+führen dieselben Rennen oft unter Namen, die **nichts miteinander zu tun
+haben**.
+
+| im Reglement | in `races` | Ähnlichkeit |
+|---|---|---|
+| `DSSK (Donostia San Sebastian Klasikoa)` | Clásica de San Sebastián | 0,48 |
+| `In Flanders Fields - From Middelkerke to Wevelgem` | Gent–Wevelgem | 0,33 |
+| `Ronde van Vlaanderen-Tour des Flandres` | Tour of Flanders | 0,48 |
+| `ADAC Cyclassics` | Hamburg Cyclassics | 0,73 |
+| `Itzulia Basque Country` | Tour of the Basque Country | 0,71 |
+| `La Vuelta Ciclista a España` | Vuelta a España | 0,71 |
+| `Omloop Nieuwsblad` | Omloop Het Nieuwsblad | 0,90 |
+
+Eine Schwelle, die den ersten Fall fände, würde beliebig viel Falsches
+mitnehmen. Die Datei liegt im Repository, ist damit nachvollziehbar und
+überprüfbar, und ein Fehler darin lässt sich zurücknehmen wie jede andere
+Änderung.
+
+**Sie steht über einer bereits gesetzten `race_id`** — auch über einer, die
+ein früherer maschineller Treffer geschrieben hat. Die Datei ist versioniert
+und geprüft, ein Ähnlichkeitstreffer ist es nicht.
+
+**Eine `race_id`, die es nicht gibt, wird gemeldet und übersprungen**, nicht
+geschrieben. Sonst bräche der Fremdschlüssel die ganze Transaktion ab und
+risse die maschinellen Zuordnungen mit — ein Tippfehler in einer Zeile
+hätte alle übrigen verloren. `scripts/check-uci-punkte.py` prüft zusätzlich
+ohne Datenbank, dass jeder Name in der Datei auch im Reglement vorkommt:
+ein Tippfehler dort liesse die Zeile sonst still ins Leere laufen.
+
+### Zwei Rennen fehlen in `races`
+
+`Grand Prix Cycliste de Québec` und `Grand Prix Cycliste de Montréal` stehen
+im Reglement, aber **nicht** in der Renn-Tabelle — von 36 WorldTour-Namen
+der Männer sind nur 34 geseedet. Sie lassen sich deshalb nicht zuordnen, und
+eine erfundene `race_id` wäre schlimmer als die Lücke. Warum das
+Kalender-Seeding sie übersprungen hat, ist offen und eine eigene
+Untersuchung wert.
+
 **Die 52 Frauen-Zeilen können heute nicht aufgehen.** `races` enthält keine
 Frauenrennen — der Kalender wird nur für Männer geseedet. Das ist keine
 Schwäche des Abgleichs, sondern die nächste offene Baustelle.
@@ -445,7 +489,7 @@ Schwäche des Abgleichs, sondern die nächste offene Baustelle.
 DATABASE_URL=postgresql://... python3 scripts/check-uci-zuordnung.py
 ```
 
-30 Prüfungen, leere Datenbank genügt. Die Hälfte belegt, dass etwas **nicht**
+36 Prüfungen, leere Datenbank genügt. Die Hälfte belegt, dass etwas **nicht**
 passiert: der Reglement-Tippfehler bleibt offen, zwei gleichnamige Zeilen in
 `races` werden nicht geraten, ein Rennen der falschen Kategorie oder Saison
 ist kein Kandidat, keine Frauen-Zeile wird auf ein Männerrennen gelegt.

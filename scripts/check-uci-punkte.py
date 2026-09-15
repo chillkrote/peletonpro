@@ -155,6 +155,33 @@ def main() -> int:
                     unbekannt.append((geschlecht, anlass, r))
     pruefe("Etappen-/Trikot-Rennen haben ein Gesamtklassement", unbekannt, [])
 
+    print("=== 5. Handzuordnungen (falls vorhanden) ===")
+    # Die Handdatei ordnet Reglement-Namen fest einer race_id zu. Ein
+    # Tippfehler im Reglement-Namen laesst die Zeile ins Leere laufen: die
+    # Zuordnung passiert dann nicht, und niemand merkt es - die Datei sieht
+    # ja gepflegt aus. Deshalb hier gegen die Stufen-Datei pruefen.
+    hand = WURZEL / "docs" / "uci-punkte-2026-race-ids.csv"
+    if not hand.exists():
+        print("  keine Handdatei vorhanden - uebersprungen")
+    else:
+        eintraege = list(csv.DictReader(hand.open(encoding="utf-8")))
+        bekannt = {(z["geschlecht"], z["rennen"]) for z in
+                   csv.DictReader(STUFEN_CSV.open(encoding="utf-8"))}
+        unbekannt = sorted(
+            (z["geschlecht"], z["rennen_reglement"]) for z in eintraege
+            if (z["geschlecht"], z["rennen_reglement"]) not in bekannt)
+        pruefe("jeder Name kommt auch im Reglement vor", unbekannt, [])
+        schluessel = [(z["geschlecht"], z["rennen_reglement"]) for z in eintraege]
+        pruefe("kein Name doppelt", len(schluessel), len(set(schluessel)))
+        pruefe("keine leere race_id",
+               [z for z in eintraege if not z["race_id"].strip()], [])
+        falsche_saison = sorted(
+            z["race_id"] for z in eintraege if not z["race_id"].startswith("2026-"))
+        pruefe("jede race_id gehoert zur Saison 2026", falsche_saison, [])
+        mehrfach = [r for r in {z["race_id"] for z in eintraege}
+                    if sum(1 for z in eintraege if z["race_id"] == r) > 1]
+        pruefe("kein Rennen zweimal vergeben", sorted(mehrfach), [])
+
     print()
     if fehler:
         print(f"{fehler} FEHLER.")

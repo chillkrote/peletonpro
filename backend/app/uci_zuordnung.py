@@ -15,8 +15,11 @@ andere auf NULL stehen. Eine offene Zuordnung ist abfragbar
 (`WHERE race_id IS NULL`) und steht in der Log-Meldung; eine falsche wäre
 unsichtbar. Die Richtung des Irrtums ist hier die ganze Entscheidung.
 
-DREI STUFEN, GETRENNT GEZÄHLT
+VIER STUFEN, GETRENNT GEZÄHLT
 -----------------------------
+    von_hand    aus docs/uci-punkte-<saison>-race-ids.csv. Steht ueber
+                allem anderen: die Datei ist versioniert und geprueft, ein
+                maschineller Treffer ist es nicht.
     exakt       Vergleichsform beider Namen identisch.
     enthalten   der Reglement-Name steht als ganzes Wortfolge in GENAU
                 einem Kandidaten ("Tour of Guangxi" in "Gree-Tour of
@@ -24,9 +27,25 @@ DREI STUFEN, GETRENNT GEZÄHLT
     aehnlich    Ähnlichkeit >= SCHWELLE und mindestens ABSTAND besser als
                 der zweitbeste Kandidat.
 
-Getrennt gezählt, weil die drei nicht gleich verlässlich sind: wer die
-Zahlen im Log sieht, weiß, wie viel davon geraten ist. "exakt" braucht
-keine Nachprüfung, "aehnlich" schon.
+Getrennt gezählt, weil sie nicht gleich verlässlich sind: wer die Zahlen
+im Log sieht, weiß, wie viel davon geraten ist. "von_hand" und "exakt"
+brauchen keine Nachprüfung, "enthalten" und "aehnlich" schon - die beiden
+stehen deshalb namentlich im Log.
+
+WOFÜR DIE HANDDATEI DA IST
+--------------------------
+Das Reglement und Wikipedia benennen dieselben Rennen oft verschieden, und
+zwar nicht zufällig, sondern weil das eine den offiziellen und das andere
+den gebräuchlichen Namen führt: "DSSK (Donostia San Sebastian Klasikoa)"
+gegen "Clásica de San Sebastián", "ADAC Cyclassics" gegen "Hamburg
+Cyclassics", "In Flanders Fields - From Middelkerke to Wevelgem" gegen
+"Gent-Wevelgem". Keine Ähnlichkeitsschwelle der Welt findet diese Paare,
+ohne gleichzeitig falsche zu finden - die Schreibweisen haben schlicht
+nichts miteinander zu tun.
+
+Die Datei ist deshalb kein Notbehelf, sondern der vorgesehene Weg. Sie
+liegt im Repository, ist also nachvollziehbar und überprüfbar, und ein
+Fehler darin lässt sich zurücknehmen wie jede andere Änderung.
 
 WANN ES LÄUFT
 -------------
@@ -38,7 +57,9 @@ werden: ein Rennen, das beim ersten Lauf noch nicht in `races` stand, wird
 beim nächsten gefunden. Ein Takt wie bei den Wikipedia-Jobs (app/kadenz.py)
 wäre hier also falsch.
 """
+import csv
 import logging
+import pathlib
 import re
 from difflib import SequenceMatcher
 from typing import Optional
@@ -57,6 +78,9 @@ ABSTAND = 0.05
 # Logzeile, die niemand liest; die vollstaendige Liste steht in der
 # Datenbank.
 LOG_GRENZE = 12
+
+# docs/ liegt neben backend/, nicht darin - wie bei app/uci_punkte.py.
+DOCS = pathlib.Path(__file__).resolve().parent.parent.parent / "docs"
 
 _MEHRFACH_LEER = re.compile(r"\s+")
 _UM_BINDESTRICH = re.compile(r"\s*-\s*")
@@ -126,6 +150,56 @@ def _beste(ziel: str, kandidaten: dict[str, str]) -> tuple[Optional[str], str]:
     return beste_id, "aehnlich"
 
 
+def _handzuordnung(conn, saison: int) -> dict[tuple[str, str], str]:
+    """{(gender, rennen_reglement): race_id} aus der Handdatei.
+
+    Fehlt die Datei, ist das kein Fehler: eine Saison ohne Handzuordnungen
+    ist der Normalfall, solange die Namen zusammenpassen."""
+    pfad = DOCS / f"uci-punkte-{saison}-race-ids.csv"
+    if not pfad.exists():
+        return {}
+    zuordnung = {}
+    try:
+        for z in csv.DictReader(pfad.open(encoding="utf-8")):
+            schluessel = (z["geschlecht"], z["rennen_reglement"])
+            if schluessel in zuordnung:
+                logger.warning(
+                    "Handzuordnung %d: %r steht zweimal in der Datei - die "
+                    "zweite Zeile gewinnt", saison, z["rennen_reglement"])
+            zuordnung[schluessel] = z["race_id"]
+    except Exception as exc:  # noqa: BLE001 - kaputte Datei darf nicht crashen
+        logger.error("Handzuordnung %d nicht lesbar (%s): %s", saison, pfad.name, exc)
+        return {}
+    return zuordnung
+
+
+def _melde(saison: int, bericht: dict, geraten: list, offene_namen: list) -> None:
+    """Die drei Log-Zeilen. An einer Stelle, weil zuordnen() an zwei
+    Stellen fertig sein kann - nach der Handzuordnung, wenn danach nichts
+    mehr offen ist, und am regulaeren Ende."""
+    if not any(bericht.values()):
+        return
+    logger.info(
+        "Rennzuordnung %d: %d von Hand, %d exakt, %d enthalten, %d aehnlich, %d offen",
+        saison, bericht["von_hand"], bericht["exakt"], bericht["enthalten"],
+        bericht["aehnlich"], bericht["offen"],
+    )
+    if geraten:
+        logger.info(
+            "Rennzuordnung %d abgeleitet (%d): %s%s",
+            saison, len(geraten), "; ".join(geraten[:LOG_GRENZE]),
+            f" ... und {len(geraten) - LOG_GRENZE} weitere"
+            if len(geraten) > LOG_GRENZE else "",
+        )
+    if offene_namen:
+        logger.info(
+            "Rennzuordnung %d offen (%d Namen): %s%s",
+            saison, len(offene_namen), "; ".join(offene_namen[:LOG_GRENZE]),
+            f" ... und {len(offene_namen) - LOG_GRENZE} weitere"
+            if len(offene_namen) > LOG_GRENZE else "",
+        )
+
+
 def zuordnen(saison: Optional[int] = None) -> dict:
     """Setzt `uci_rennstufe.race_id`, wo es belegbar ist.
 
@@ -149,13 +223,13 @@ def zuordnen(saison: Optional[int] = None) -> dict:
                 ).fetchall()]
         except Exception as exc:  # noqa: BLE001
             logger.error("Rennzuordnung: Saisons nicht lesbar: %s", exc)
-            return {"exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
-        gesamt = {"exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
+            return {"von_hand": 0, "exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
+        gesamt = {"von_hand": 0, "exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
         for jahr in saisons:
             for k, v in zuordnen(jahr).items():
                 gesamt[k] += v
         return gesamt
-    bericht = {"exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
+    bericht = {"von_hand": 0, "exakt": 0, "enthalten": 0, "aehnlich": 0, "offen": 0}
     offene_namen: list[str] = []
     # Die abgeleiteten Zuordnungen namentlich, nicht nur gezaehlt - siehe
     # die Log-Meldung unten.
@@ -182,6 +256,47 @@ def zuordnen(saison: Optional[int] = None) -> dict:
                         (saison, gender),
                     ).fetchall()
                 }
+
+            # Handzuordnungen zuerst. Sie stehen ueber allem anderen -
+            # auch ueber einer bereits gesetzten race_id, die von einem
+            # frueheren maschinellen Treffer stammen kann. Die Datei ist
+            # versioniert und geprueft; ein Treffer der Aehnlichkeitssuche
+            # ist es nicht.
+            von_hand = _handzuordnung(conn, saison)
+            if von_hand:
+                # Nur Rennen, die es wirklich gibt: ein Fremdschluessel-
+                # Verstoss wuerde die ganze Transaktion abbrechen und damit
+                # auch die maschinellen Zuordnungen mitreissen. Lieber die
+                # eine Zeile melden und weitermachen.
+                echte = {z["id"] for z in conn.execute(
+                    "SELECT id FROM races WHERE id = ANY(%s)",
+                    (sorted(set(von_hand.values())),),
+                ).fetchall()}
+                for (gender, name), race_id in sorted(von_hand.items()):
+                    if race_id not in echte:
+                        logger.warning(
+                            "Handzuordnung %d: %r -> %s - dieses Rennen steht "
+                            "nicht in races, Zeile bleibt offen",
+                            saison, name, race_id)
+                        continue
+                    cur = conn.execute(
+                        "UPDATE uci_rennstufe SET race_id = %s WHERE saison = %s "
+                        "AND gender = %s AND rennen_reglement = %s "
+                        "AND (race_id IS NULL OR race_id <> %s)",
+                        (race_id, saison, gender, name, race_id),
+                    )
+                    bericht["von_hand"] += cur.rowcount
+
+                # Nach der Handzuordnung neu lesen, was noch offen ist.
+                offen = conn.execute(
+                    "SELECT saison, gender, anlass, stufe, rennen_reglement "
+                    "FROM uci_rennstufe WHERE saison = %s AND race_id IS NULL "
+                    "ORDER BY gender, anlass, rennen_reglement",
+                    (saison,),
+                ).fetchall()
+                if not offen:
+                    _melde(saison, bericht, [], [])
+                    return bericht
 
             # Je Zeile EINMAL bewerten.
             bewertet = [
@@ -232,32 +347,5 @@ def zuordnen(saison: Optional[int] = None) -> dict:
         logger.error("Rennzuordnung fehlgeschlagen: %s", exc)
         return bericht
 
-    if not any(bericht.values()):
-        return bericht
-    logger.info(
-        "Rennzuordnung %d: %d exakt, %d enthalten, %d aehnlich, %d offen",
-        saison, bericht["exakt"], bericht["enthalten"], bericht["aehnlich"],
-        bericht["offen"],
-    )
-    # Die abgeleiteten Zuordnungen NAMENTLICH. Sie getrennt zu ZAEHLEN war
-    # der halbe Schritt: wer wissen will, wie viel geraten ist, will danach
-    # wissen, WAS geraten wurde - sonst ist die Zahl eine Beunruhigung ohne
-    # Handhabe. Beim ersten Produktionslauf (14.09.2026) standen hier "2
-    # aehnlich", und welche zwei es waren, liess sich nicht feststellen.
-    # Die Liste bleibt kurz, weil die beiden Stufen per Konstruktion selten
-    # sind; "exakt" braucht keine Nachpruefung und steht deshalb nicht drin.
-    if geraten:
-        logger.info(
-            "Rennzuordnung %d abgeleitet (%d): %s%s",
-            saison, len(geraten), "; ".join(geraten[:LOG_GRENZE]),
-            f" ... und {len(geraten) - LOG_GRENZE} weitere"
-            if len(geraten) > LOG_GRENZE else "",
-        )
-    if offene_namen:
-        logger.info(
-            "Rennzuordnung %d offen (%d Namen): %s%s",
-            saison, len(offene_namen), "; ".join(offene_namen[:LOG_GRENZE]),
-            f" ... und {len(offene_namen) - LOG_GRENZE} weitere"
-            if len(offene_namen) > LOG_GRENZE else "",
-        )
+    _melde(saison, bericht, geraten, offene_namen)
     return bericht

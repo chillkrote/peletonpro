@@ -441,9 +441,14 @@ Zwei Dinge, die für eine Berechnung noch fehlen:
    absichtlich zu streng: „Omloop Nieuwsblad" gegen „Omloop Het
    Nieuwsblad" erreicht 0,895 und bleibt offen. Eine offene Zuordnung
    fällt als `NULL` auf, eine falsche erzeugt still zu hohe Punktzahlen.
-   Von Hand gesetzte Zuordnungen werden nie überschrieben. Die 52
+   Was keine Schwelle finden kann, steht in
+   `docs/uci-punkte-2026-race-ids.csv` und gilt vor allem anderen — das
+   Reglement schreibt „DSSK (Donostia San Sebastian Klasikoa)", wo bei uns
+   „Clásica de San Sebastián" steht (Ähnlichkeit 0,48). Eine `race_id`, die
+   es nicht gibt, wird gemeldet und übersprungen, nicht geschrieben. Die 52
    Frauen-Zeilen können heute nicht aufgehen: `races` enthält keine
-   Frauenrennen.
+   Frauenrennen. `Grand Prix Cycliste de Québec` und `… de Montréal` fehlen
+   ausserdem im Kalender — eigene Baustelle.
 2. **`taxonomy.Category` reicht nicht.** Die Skala unterscheidet im
    Kontinentalkalender Class 1, Class 2 und 1.2U/2.2U — auf Platz 1 sind
    das 125, 40 und 30 Punkte. Alle drei landen heute in `continental`.
