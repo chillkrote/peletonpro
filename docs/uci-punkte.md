@@ -553,10 +553,67 @@ auffallen kann.
 ### Wer keine `rider_id` hat, bekommt keine Punkte
 
 `race_results.rider_id` ist nur dort gesetzt, wo sich der Name einem Fahrer
-zuordnen liess (in Produktion rund die Hälfte der Zeilen). Ohne ID lässt
-sich die Zeile keinem Fahrer gutschreiben. Die Zahl steht in der
-Log-Meldung — sie sagt zugleich, wie vollständig die Rechnung überhaupt
-sein kann.
+zuordnen liess. Ohne ID lässt sich die Zeile keinem Fahrer gutschreiben.
+
+**Gemessen, nicht geschätzt.** Ich hatte hier „rund die Hälfte der Zeilen"
+geschrieben — übertragen aus Migration 0004, die über **alle** Saisons und
+Kategorien 12.123 von 22.474 Zeilen zuordnen konnte. Für die Rennen, die
+tatsächlich gerechnet werden, ist die Quote viel besser:
+
+    UCI-Punkte berechnet: 31 Rennen, 980 Ergebniszeilen, davon 847 gewertet,
+                          133 ohne Fahrer-ID, 0 ausserhalb der Skala
+
+**133 von 980, also 13,6 %.** Der Grund ist einleuchtend, sobald man ihn
+sieht: gerechnet wird nur die WorldTour der laufenden Saison, und deren
+Fahrer stehen als aktuelle Kader in `riders`. Die schlechte Quote aus 0004
+stammt aus alten Saisons und dem Kontinentalkalender, wo die Fahrer bei uns
+gar nicht erfasst sind.
+
+### Die eigentliche Grenze: Wikipedia veröffentlicht nur die Spitze
+
+`0 ausserhalb der Skala` ist die interessanteste Zahl der ganzen Messung.
+Sie heisst: **keine einzige** der 980 Ergebniszeilen hatte eine Platzierung,
+die tiefer reicht als die Skala. Die Gesamtklassement-Skala geht bis Platz
+60, die Etappenskala bis 15. Dass nichts darüber hinausfiel, belegt:
+
+- Etappen-Ergebnistabellen sind höchstens **15** Zeilen tief,
+- Gesamtklassement-Tabellen höchstens **60**,
+
+und bei 980 Zeilen auf 31 Rennen (≈ 32 je Rennen, Etappen eingerechnet) sind
+sie in Wirklichkeit deutlich flacher — englische Wikipedia-Rennartikel führen
+typischerweise eine Top-10.
+
+**Das liegt nicht an unserem Code.** `wikipedia_tables.parse_result_row`
+liest jede Zeile der Tabelle, es gibt keine Begrenzung; die Flachheit kommt
+aus der Quelle.
+
+**Was das kostet, nachgerechnet.** Die Plätze 11 bis 60 sind aus dieser
+Quelle grundsätzlich nicht zu holen. Wie viel das ist, hängt vom Rennen ab —
+und ist kleiner, als es intuitiv wirkt:
+
+| Stufe | Top-10 | Plätze 11–60 | Anteil der fehlenden Ränge |
+|---|---|---|---|
+| `gc1` (Tour) | 6.420 | 2.315 | 26 % |
+| `gc2` (Giro, Vuelta) | 5.285 | 1.850 | 26 % |
+| `gc3` (Monumente) | 3.775 | 1.335 | 26 % |
+| `gc4` | 2.360 | 845 | 26 % |
+| `gc5` | 1.888 | 674 | 26 % |
+
+Rund ein Viertel der Punkte eines Rennens ist also nicht erreichbar, nicht
+die Mehrheit. **Aber die Verteilung ist das Problem, nicht die Summe:** die
+fehlenden Punkte gehören nicht allen ein bisschen, sondern **ganz bestimmten
+Fahrern ganz**. Wer eine Saison lang zwischen Platz 11 und 20 fährt, steht
+bei uns mit **null** Punkten da, obwohl er in der echten Rangliste weit oben
+steht. Für einen Spitzenfahrer, der regelmässig die Top-10 trifft, stimmt die
+Zahl dagegen weitgehend.
+
+Wer eine vollständige Rangliste will, braucht eine tiefere Ergebnisquelle —
+eine Quellenfrage, keine Programmierfrage.
+
+Nachprüfen lässt sich die genaue Tiefe mit einer Abfrage gegen ein
+einzelnes Rennen, zum Beispiel
+`/api/race-history/2026-wt-tour-de-france`: die Länge der `results`-Liste
+ist die Antwort.
 
 ### Prüfen
 

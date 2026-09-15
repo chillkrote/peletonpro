@@ -461,6 +461,17 @@ Ranglisten. Abgedeckt sind Gesamtklassement und Etappen der WorldTour.
 von dreizehn Anlässen sind keine UCI-Rangliste, und eine Teilsumme in einer
 Spalte dieses Namens wäre eine stille Falschaussage.
 
+Erster Produktionslauf (15.09.2026): `31 Rennen, 980 Ergebniszeilen, davon
+847 gewertet, 133 ohne Fahrer-ID, 0 ausserhalb der Skala`. Die letzte Zahl
+ist die wichtigste: **Wikipedia veröffentlicht nur die Spitze** (Etappen
+höchstens 15 Plätze, Gesamtklassement höchstens 60, real meist eine
+Top-10). Punkte für die Plätze 11 bis 60 sind aus dieser Quelle nicht zu
+holen: nachgerechnet **26 %** der Punkte eines Rennens, in jeder Stufe
+gleich. Nicht die Mehrheit — aber die fehlenden Punkte gehören bestimmten
+Fahrern **ganz**: wer eine Saison lang zwischen Platz 11 und 20 fährt, steht
+bei uns mit null da. Eine Quellenfrage, keine Programmierfrage. Begründung
+in `docs/uci-punkte.md`.
+
 Sechs der dreizehn Anlässe haben ausserdem gar keine Quelle: nationale
 Meisterschaften, Kontinentalmeisterschaften, WM und Olympia stehen nicht
 im Kalender, der über `taxonomy.achsen_kombinationen()` geseedet wird.
