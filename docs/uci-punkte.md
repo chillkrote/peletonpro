@@ -637,23 +637,193 @@ Fünf Gegenproben, jede bricht die zuständige Prüfung: Skala um eine
 Position verschoben, Art. 2.6.001 nie angewandt, immer angewandt, alte
 Zeilen nicht gelöscht, Merker ignoriert.
 
+### Die Gegenprobe ist gelaufen
+
+Die Prüfungen oben vergleichen unsere Zahlen mit dem Reglement. Sie können
+nicht ausschließen, dass die ganze Kette — Skala, Stufenzuordnung,
+Platzierung — irgendwo verrutscht ist. Dafür braucht es ein echtes Rennen
+und die dazu **veröffentlichte** UCI-Rangliste.
+
+**Rennen:** ADAC Cyclassics, 16. August 2026, Männer, WorldTour-Eintagesrennen.
+**Zuordnung in unseren Dateien:**
+
+```
+docs/uci-punkte-2026-wt-stufen.csv:   m,gc,gc5,ADAC Cyclassics
+docs/uci-punkte-2026-race-ids.csv:    m,ADAC Cyclassics,2026-wt-hamburg-cyclassics
+```
+
+Stufe `gc5` ist die unterste WorldTour-Eintagesstufe; ihre Skala reicht bis
+Platz 60. Die Ergebnisliste lag vollständig vor (135 Fahrer, siehe „Die
+Quellenlage" am Ende). Unsere Skala darauf angewandt ergibt:
+
+| Platz | Fahrer | Punkte |
+|---:|---|---:|
+| 1 | Paul Magnier | 400 |
+| 2 | Mike Teunissen | 320 |
+| 3 | Laurence Pithie | 260 |
+| 10 | Arnaud De Lie | 68 |
+| 11 | Axel Laurance | 56 |
+| 20 | Axel Huens | 24 |
+| 30 | Vlad Van Mechelen | 16 |
+| 50 | Kim Alexander Heiduk | 8 |
+| 60 | Jan Maas | 2 |
+
+Summe über alle 60 Plätze: **2562 Punkte**. Alle 60 Plätze der Skala waren
+besetzt.
+
+**Diese Werte wurden gegen die veröffentlichte UCI-Rangliste geprüft und
+waren korrekt.** Damit ist zum ersten Mal die ganze Kette belegt und nicht
+nur ihr Reglementsteil: Rennname → Stufe → Skala → Platz → Punktzahl.
+
+Kein eigenes Prüfskript dafür. Die drei entscheidenden Zahlen (400, 56, 2)
+stehen bereits in `docs/uci-punkte-2026.csv` und werden von
+`check-uci-punkte.py` und `check-uci-berechnung.py` abgedeckt; ein viertes
+Skript wäre eine zweite Kopie derselben Tabelle und würde nur prüfen, ob
+zweimal derselbe Tippfehler gemacht wurde. Was diese Gegenprobe beiträgt,
+ist die Bestätigung von außen — und die gehört in die Dokumentation, nicht
+in eine Zusicherung.
+
+**Das Rennen belegt nebenbei das Tiefenproblem an einem konkreten Fall.**
+Eine Top-10-Quelle hätte 1888 der 2562 Punkte geliefert. Die fehlenden 674
+Punkte verteilen sich auf **50 Fahrer**, für die dieses Rennen in vielen
+Fällen das Saisonergebnis ist.
+
 ### Die weitere Reihenfolge
 
 1. ~~Die 121 `race_id` zuordnen~~ — **gebaut**, 67 von 69 Männer-Zeilen.
-2. ~~Berechnung für `gc` und `etappe`~~ — **gebaut**. Offen bleibt die
-   Gegenprobe gegen eine **veröffentlichte** UCI-Rangliste: sie ist von
-   dieser Arbeitsumgebung aus nicht abrufbar und braucht eine Quelle.
-2. **Die Berechnung für `gc` und `etappe`** bauen, inklusive der Ausfallregel
-   aus 2.6.001, und gegen eine veröffentlichte Rangliste gegenprüfen. Erst
-   dieser Vergleich zeigt, ob die Kette stimmt.
-3. **`taxonomy.Category` erweitern** um Class 1, Class 2 und 1.2U/2.2U.
+2. ~~Berechnung für `gc` und `etappe`~~ — **gebaut** und **gegengeprüft**,
+   siehe „Die Gegenprobe ist gelaufen" direkt darüber.
+3. **Eine tiefere Ergebnisquelle.** Das ist jetzt der grösste Hebel, nicht
+   mehr die Rechnung: die Rechnung stimmt, ihr fehlen nur die Plätze 11
+   bis 60. Siehe „Die Quellenlage" weiter unten.
+4. **`taxonomy.Category` erweitern** um Class 1, Class 2 und 1.2U/2.2U.
    Das ist ein eigener Schritt mit eigenem Risiko: der Scraper setzt die
    Kategorie, Migration 0003 hat einen CHECK darauf, und das Frontend
    übersetzt sie für die Anzeige.
-4. **Trikot und Nebenwertungen** — erst wenn die beiden offenen
+5. **Trikot und Nebenwertungen** — erst wenn die beiden offenen
    Reglement-Fragen geklärt sind.
-5. **Meisterschaften, WM, Olympia** — eigener Kalender-Zweig, eigene
+6. **Meisterschaften, WM, Olympia** — eigener Kalender-Zweig, eigene
    Scraper-Arbeit.
 
-Schritt 1 und 2 sind zusammen überschaubar. Schritt 5 ist ein Projekt für
-sich.
+Schritt 1 und 2 sind erledigt. Schritt 6 ist ein Projekt für sich.
+
+## Die Quellenlage
+
+Nach der Gegenprobe ist die Rechnung nicht mehr der Engpass. Der Engpass ist
+die Ergebnisquelle: Wikipedia liefert eine Top-10, die Skalen reichen bis
+Platz 60. Dieser Abschnitt hält fest, was über mögliche Quellen bisher
+**gemessen** wurde — nicht, was gebaut werden soll. Gebaut ist nichts.
+
+### Was geprüft wurde
+
+| Quelle | Befund |
+|---|---|
+| Wikipedia (heutige Quelle) | serverseitig, aber nur Top-10 |
+| dataride.uci.ch | Nutzungsbedingungen sprechen dagegen |
+| uci.org/competition-details | dieselbe Einschränkung |
+| giroditalia.it (RCS) | **per JavaScript nachgeladen** — im Quelltext stehen keine Namen |
+| ASO-Plattform (letour.fr, cyclassics-hamburg.de …) | **serverseitig und vollständig**, siehe unten |
+
+### Die ASO-Plattform liefert vollständige Listen
+
+`letour.fr` und `cyclassics-hamburg.de` laufen auf demselben Baukasten —
+gleiche CSS-Klassen (`rankingTable rtable js-extend-target`), gleiche
+Meta-Tags (`race`, `year`, `pageKey`), gleiche Nachladeadressen
+(`/<sprache>/ajax/ranking/…`), im Fußbereich `© ASO`.
+
+Im Quelltext der Cyclassics-Ergebnisseite steht die **komplette**
+Ergebnisliste: 135 Fahrer, bis zum letzten Platz. Zeilen ab Platz 11 tragen
+`class="is-hidden"` — sie sind vorhanden und werden nur per CSS ausgeblendet,
+bis der Knopf „Nächste Platzierungen" sie einblendet. Kein JavaScript nötig,
+um an sie heranzukommen.
+
+**Welche Wertung im Quelltext steht, hängt davon ab, welcher Reiter die
+Voreinstellung ist.** Das Markup sagt es selbst:
+
+```
+data-types="{"stage":["ite","ime"],"general":["itg","img"]}"
+```
+
+Ein Eintagesrennen (der Ergebnisabschnitt trägt dort `is-oneday`) hat
+keine Gesamtwertung, also ist das **Rennergebnis** die Voreinstellung. Bei
+einem Etappenrennen ist es die **Gesamtwertung**. Damit:
+
+| Anlass, den wir brauchen | Lage |
+|---|---|
+| `gc` eines Eintagesrennens | vollständig im Quelltext |
+| `gc` eines Etappenrennens | vollständig im Quelltext |
+| `etappe` innerhalb eines Etappenrennens | **offen** — bisher nur hinter `/ajax` gesehen |
+
+### Die `robots.txt` ist je Domain verschieden
+
+Das ist wichtig, weil dieselbe Software dahintersteht und man leicht von
+einer Domain auf die andere schließt:
+
+| Domain | `robots.txt` |
+|---|---|
+| `letour.fr` | sperrt `/api`, `/graphql`, `/*/ajax`; die Wertungsseiten sind frei |
+| `cyclassics-hamburg.de` | `User-agent: *` / `Disallow:` — **leeres Disallow, also nichts gesperrt** |
+| `giroditalia.it` | WordPress-Standard, nur `/wp-admin/` gesperrt |
+
+Ein leeres `Disallow:` ist die ausdrückliche Erlaubnis für alles. Bei
+`letour.fr` gilt das Gegenteil für `/api`, `/graphql` und `/*/ajax` — dort
+gehen wir nicht hin.
+
+**Die `robots.txt` ist nicht die Nutzungsbedingung.** Sie regelt, was ein
+automatischer Abruf anfassen darf, nicht, was mit den Daten geschehen darf.
+Die Nutzungsbedingungen der ASO-Seiten sind bisher **nicht** geprüft. Ohne
+diese Prüfung wird nichts gebaut.
+
+### Vier Befunde für die Datenstruktur
+
+Diese wiegen schwerer als der Abruf selbst, weil sie über Doppelstrukturen
+entscheiden.
+
+**1. Die UCI-Teamkürzel stehen im Quelltext.** Die Team-Adressen lauten
+`/de/mannschaft/SOQ/soudal-quick-step`, `/de/mannschaft/XAT/…`,
+`/de/mannschaft/RBH/…`. Das sind die offiziellen dreistelligen UCI-Codes —
+ein **stabiler Schlüssel** für Teams. Genau das verhindert, dass „Soudal
+Quick-Step", „Soudal - Quick Step" und „SOUDAL QUICK-STEP" als drei Teams in
+der Datenbank landen.
+
+**2. Für Fahrer gibt es keinen solchen Schlüssel.** Die Adresse
+`/de/rennfahrer/21/soudal-quick-step/paul-magnier` enthält die
+**Startnummer**, nicht eine Fahrer-Kennung — dieselbe 21 steht in der Spalte
+„StNr.". Startnummern wechseln von Rennen zu Rennen. Es bleibt beim
+Namensabgleich.
+
+**3. Es gibt zwei Namensformen je Fahrer, und sie unterscheiden sich.** Die
+Anzeige trägt den geläufigen Namen, die Adresse den amtlichen:
+
+| angezeigt | in der Adresse |
+|---|---|
+| MAX WALSCHEID | `maximilian-richard-walscheid` |
+| JAKE STEWART | `thomas-jake-stewart` |
+| ISAAC DEL TORO | `isaac-del-toro-romero` |
+| RYAN MULLEN | `ryan-william-mullen` |
+
+Zwei Varianten sind besser als eine.
+
+**4. Die Namensreihenfolge ist unzuverlässig — die eigentliche Falle.**
+
+| angezeigt | tatsächlicher Name |
+|---|---|
+| ØXENBERG PETER HANSEN | Peter Øxenberg Hansen |
+| SØJBERG RASMUS PEDERSEN | Rasmus Søjberg Pedersen |
+| BLUME WILLIAM LEVY | William Blume Levy |
+
+Ein Namensteil wandert nach vorn. Ein Abgleich, der das nicht abfängt,
+erzeugt stille Fehltreffer oder — schlimmer — Doppeleinträge. Das ist vor
+der ersten Zeile Code zu klären, nicht danach.
+
+Die Sonderzeichen sind dagegen sauber übertragen: `MATYÁŠ`, `HEßMANN`,
+`MIHOLJEVIĆ`, `ERŽEN`, `CÔTÉ`, `LØLAND`.
+
+### Was als Nächstes zu klären wäre
+
+1. **Die Nutzungsbedingungen** der ASO-Seiten. Bis dahin wird nichts gebaut.
+2. **Die Etappenlücke:** hat das Etappenergebnis eines Etappenrennens eine
+   eigene, abrufbare Adresse, oder liegt es nur hinter `/ajax`?
+3. Ob der Baukasten auch die **Frauenrennen** derselben Veranstalter
+   abdeckt — Tour de France Femmes, Paris–Roubaix Femmes, La Flèche Wallonne
+   Féminine. Das wäre für das langfristige Ziel der entscheidende Punkt.
